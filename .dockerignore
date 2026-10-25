@@ -1,0 +1,12 @@
+.git
+.github
+docs
+__pycache__
+*.md
+*_test.py
+test_*.py
+selftest.py
+*_selftest.py
+ledger.json
+smoke-results.json
+snapshots
