@@ -21,7 +21,7 @@
  "packages": [
   {
    "registryType": "oci",
-   "identifier": "ghcr.io/cyan-eclipse-technologies-llc/agent-wallet-mcp:be6cc6c24cbc240201232960f6fc3ec9c34a0a53",
+   "identifier": "ghcr.io/cyan-eclipse-technologies-llc/agent-wallet-mcp:2842d69a363c4412a4c1347878fd27b7ca9d9aeb",
    "runtimeHint": "docker",
    "transport": {
     "type": "stdio"
