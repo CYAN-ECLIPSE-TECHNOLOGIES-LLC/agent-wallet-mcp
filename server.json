@@ -21,7 +21,6 @@
  "packages": [
   {
    "registryType": "oci",
-   "registryBaseUrl": "https://ghcr.io",
    "identifier": "ghcr.io/cyan-eclipse-technologies-llc/agent-wallet-mcp",
    "version": "be6cc6c24cbc240201232960f6fc3ec9c34a0a53",
    "runtimeHint": "docker",
