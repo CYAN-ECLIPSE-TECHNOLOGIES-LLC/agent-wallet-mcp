@@ -10,9 +10,11 @@ House laws enforced here:
   NEVER consume the desk nonce (fixes F3).
 - Dispatch re-runs the FULL policy check at execution time (fixes F4):
   frozen -> policy present/unexpired -> allowlist -> caps (per-asset +
-  USD aggregate) -> desk-auth -> balance + gas -> quote/depeg freshness
-  -> adapter health. The desk nonce is consumed exactly once, only after
-  every check passes.
+  USD aggregate) -> desk-auth -> Herald mandate status (F-1: signature
+  + expiry + status-list revocation, verified pre-sign via
+  mandate_check; an accepted mandate's jti binds onto the receipt) ->
+  balance + gas -> quote/depeg freshness -> adapter health. The desk
+  nonce is consumed exactly once, only after every check passes.
 """
 from __future__ import annotations
 
@@ -63,6 +65,18 @@ class TransitionError(Exception):
 
 class NonceError(Exception):
     code = "DESK_AUTH_NONCE"
+
+
+class MandateCheckFailed(Exception):
+    """Raised by a Dispatcher's mandate_verifier (see mandate_check).
+    .code is a policy.RefusalCode value naming the refusal
+    (MANDATE_REVOKED / MANDATE_EXPIRED / MANDATE_INVALID /
+    MANDATE_UNKNOWN / MANDATE_SCOPE / MANDATE_STATUS_UNAVAILABLE)."""
+
+    def __init__(self, code: str, reason: str):
+        super().__init__(reason)
+        self.code = code
+        self.reason = reason
 
 
 class NonceLedger:
@@ -124,6 +138,11 @@ class PaymentIntent:
     # is the desk key's 64-byte X||Y. Neither is key material.
     desk_auth_signature: str | None = None
     desk_public_key: bytes | None = None
+    # F-1: a presented Herald mandate credential (compact JWS). When
+    # set, dispatch verifies it with Herald BEFORE signing; on success
+    # mandate_jti is populated and binds onto every receipt.
+    mandate_credential: str | None = None
+    mandate_jti: str | None = None
 
     def __post_init__(self):
         if isinstance(self.amount_base, bool) or not isinstance(self.amount_base, int):
@@ -202,7 +221,8 @@ class Dispatcher:
     def __init__(self, *, registry, adapters: dict, oracle, policy,
                  nonces: NonceLedger | None = None,
                  tracker: SpendTracker | None = None, clock=None,
-                 desk_auth_verifier=None, max_staleness_s: int = 300):
+                 desk_auth_verifier=None, max_staleness_s: int = 300,
+                 mandate_verifier=None, require_mandate: bool = False):
         self.registry = registry
         self.adapters = adapters
         self.oracle = oracle
@@ -213,6 +233,13 @@ class Dispatcher:
         self.max_staleness_s = max_staleness_s
         # desk_auth_verifier(intent) -> bool; default: intent.desk_auth_ok
         self._verify_auth = desk_auth_verifier or (lambda i: i.desk_auth_ok)
+        # F-1: mandate_verifier(intent, payment_context) -> jti, raising
+        # MandateCheckFailed on refusal (see mandate_check for the
+        # Herald bridge). require_mandate makes a credential mandatory
+        # on this dispatch path; a presented credential is ALWAYS
+        # verified, and fails closed when no verifier is configured.
+        self.mandate_verifier = mandate_verifier
+        self.require_mandate = require_mandate
         # B1 testnet: last verdict per intent (watcher receipt factory)
         # + intents whose spend has already been recorded in the tracker
         # (recorded exactly once, at FINAL).
@@ -233,6 +260,55 @@ class Dispatcher:
                 intent.wallet_id, intent.asset_id),
             max_staleness_s=self.max_staleness_s,
             clock=self._clock, fee_quote=fee_quote)
+
+    def _check_mandate(self, intent: PaymentIntent) -> DispatchResult | None:
+        """F-1: Herald mandate enforcement at dispatch — BEFORE any
+        signing and BEFORE the desk nonce is consumed. A presented
+        credential is verified (signature + expiry + status-list
+        revocation + scope) through the configured verifier; an
+        accepted mandate's jti is recorded on the intent and binds
+        onto the receipt. Returns a refusal DispatchResult, or None
+        when dispatch may proceed."""
+        credential = intent.mandate_credential
+        if credential is None:
+            if self.require_mandate:
+                return self._refuse(
+                    intent, RefusalCode.MANDATE_REQUIRED,
+                    "this dispatch path requires a Herald mandate "
+                    "credential; none was presented")
+            return None
+        if self.mandate_verifier is None:
+            return self._refuse(
+                intent, RefusalCode.MANDATE_STATUS_UNAVAILABLE,
+                "a mandate credential was presented but no mandate "
+                "verifier is configured on this dispatcher; failing "
+                "closed (an unverifiable mandate is never ignored)")
+        row = self.registry.require(intent.asset_id)
+        context = {
+            "asset": row["symbol"], "chain": intent.chain_id,
+            "action": "pay", "counterparty": intent.to,
+            "amount_base": intent.amount_base,
+            "aggregate_spent_base": self.tracker.spent_base(
+                intent.wallet_id, intent.asset_id)}
+        try:
+            jti = self.mandate_verifier(intent, context)
+        except MandateCheckFailed as e:
+            try:
+                code = RefusalCode(e.code)
+            except ValueError:
+                code = RefusalCode.MANDATE_INVALID
+            return self._refuse(intent, code, e.reason)
+        except Exception as e:  # verifier blew up: fail closed
+            return self._refuse(
+                intent, RefusalCode.MANDATE_STATUS_UNAVAILABLE,
+                f"mandate verifier failed: {e}")
+        if not isinstance(jti, str) or not jti:
+            return self._refuse(
+                intent, RefusalCode.MANDATE_INVALID,
+                "mandate verifier returned no jti for an accepted "
+                "mandate; failing closed")
+        intent.mandate_jti = jti
+        return None
 
     def _refuse(self, intent: PaymentIntent, code, reason: str) -> DispatchResult:
         if intent.state != State.QUEUED:
@@ -318,6 +394,12 @@ class Dispatcher:
         if not self._verify_auth(intent):
             return self._refuse(intent, RefusalCode.DESK_AUTH_INVALID,
                                 "desk authorization missing or invalid")
+        # F-1: mandate status is enforced HERE — after the policy and
+        # desk-auth re-checks, before the nonce is consumed and before
+        # the fund signer ever sees the intent.
+        mandate_refusal = self._check_mandate(intent)
+        if mandate_refusal is not None:
+            return mandate_refusal
         if intent.desk_nonce is None:
             intent.desk_nonce = self.nonces.peek(intent.wallet_id)
         # A family that cannot submit in B0 must refuse BEFORE the nonce
@@ -435,6 +517,7 @@ class Dispatcher:
             verdict=verdict, policy=self.policy, tx_ref=tx_ref,
             finality_state="FINAL" if status == "FINAL" else "CONFIRMED",
             desk_auth_nonce=intent.desk_nonce,
+            mandate_id=intent.mandate_jti,
             provisional=(status != "FINAL"))
         intent.receipts.append(receipt)
         if status == "FINAL":
@@ -477,7 +560,8 @@ class Dispatcher:
                 fee_quote=verdict.fee_quote if verdict else None,
                 verdict=verdict, policy=self.policy, tx_ref=it.tx_ref,
                 finality_state=finality_state,
-                desk_auth_nonce=it.desk_nonce, provisional=provisional)
+                desk_auth_nonce=it.desk_nonce,
+                mandate_id=it.mandate_jti, provisional=provisional)
             it.receipts.append(receipt)
             if finality_state == "FINAL":
                 self._record_spend(it, verdict)

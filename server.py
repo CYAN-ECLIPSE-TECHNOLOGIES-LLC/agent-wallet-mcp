@@ -68,6 +68,7 @@ from assets import AssetRegistry
 from families.base import SandboxLedger
 from families.sandbox import SandboxAdapter
 from ledger_v2 import SANDBOX_ASSET_ID, SANDBOX_CHAIN_ID, DeltaStore, StoreError
+from mandate_check import production_verifier
 from oracle import StaticOracle
 from policy import Refusal, policy_from_dict, policy_to_dict, validate_grant
 from state_machine import (Dispatcher, NonceError, PaymentIntent,
@@ -232,6 +233,10 @@ class Runtime:
                     self.ledger.credit(addr, asset_id, int(bal))
         self.tracker = SpendTracker()
         self._seed_tracker()
+        # F-1: Herald mandate verifier over the live Herald assets
+        # (None when the Herald repo is absent — the dispatcher then
+        # refuses any presented mandate, failing closed).
+        self.mandate_verifier = production_verifier()
 
     def _seed_tracker(self) -> None:
         day = now() // 86400
@@ -253,7 +258,8 @@ class Runtime:
                           oracle=self.oracle, policy=self.policy_for(w),
                           nonces=WalletNonceBook(self.state),
                           tracker=self.tracker,
-                          desk_auth_verifier=desk_auth_verifier)
+                          desk_auth_verifier=desk_auth_verifier,
+                          mandate_verifier=self.mandate_verifier)
 
     def sync_wallets(self) -> None:
         """Write runtime ledger balances back to every wallet record."""
@@ -352,14 +358,16 @@ def _record_idempotency(state: dict, w: dict, key: str, to: str,
 def build_intent(w: dict, to: str, amount: int, memo: str, *,
                  desk_nonce=None, idempotency_key: str = "",
                  approval_granted: bool = False,
-                 desk_auth_ok: bool = False) -> PaymentIntent:
+                 desk_auth_ok: bool = False,
+                 mandate_credential=None) -> PaymentIntent:
     return PaymentIntent(
         wallet_id=w["id"],
         from_address=w["addresses"][SANDBOX_CHAIN_ID],
         asset_id=SANDBOX_ASSET_ID, chain_id=SANDBOX_CHAIN_ID,
         to=to, amount_base=amount, memo=memo, desk_nonce=desk_nonce,
         desk_auth_ok=desk_auth_ok, approval_granted=approval_granted,
-        ttl_s=INTENT_TTL_S, idempotency_key=idempotency_key)
+        ttl_s=INTENT_TTL_S, idempotency_key=idempotency_key,
+        mandate_credential=mandate_credential)
 
 
 # --------------------------------------------------------------------- tools
@@ -495,6 +503,7 @@ def _queue_pending(state, w, intent, auth, reason) -> dict:
         "expires_at": now() + PENDING_TTL_S,
         "desk_nonce": intent.desk_nonce,
         "idempotency_key": intent.idempotency_key,
+        "mandate": intent.mandate_credential,
         "authorization": auth if w.get("desk") else None,
         "asset_id": SANDBOX_ASSET_ID}
     audit(state, w["id"], "approval_requested", "agent",
@@ -543,6 +552,16 @@ def t_pay(state, args):
     to, amount = str(args["to"]), parse_usdc(args["amount_usdc"])
     memo = str(args.get("memo", ""))
     auth = args.get("authorization")
+    # F-1: an optional Herald mandate credential (compact JWS). When
+    # presented it is verified at dispatch (signature + expiry +
+    # status-list revocation) before anything signs; the accepted
+    # mandate's jti lands on the receipt.
+    mandate = args.get("mandate")
+    if mandate is not None and (not isinstance(mandate, str)
+                                or not mandate.strip()):
+        return {"status": "rejected",
+                "reason": "mandate must be a compact JWS string",
+                "refusal_code": "MANDATE_INVALID"}
     idem = _idempotency_key(args, auth)
     nonce = None
     if w.get("desk"):
@@ -567,7 +586,8 @@ def t_pay(state, args):
     rt = Runtime(state)
     intent = build_intent(w, to, amount, memo, desk_nonce=nonce,
                           idempotency_key=idem,
-                          desk_auth_ok=not w.get("desk"))
+                          desk_auth_ok=not w.get("desk"),
+                          mandate_credential=mandate)
     dispatcher = rt.dispatcher_for(
         w, desk_auth_verifier=_auth_verifier(w, auth, idem))
     res = dispatcher.authorize(intent)
@@ -614,7 +634,8 @@ def t_resolve_approval(state, args, approve: bool):
         w, req["to"], int(req["amount_base"]), req.get("memo", ""),
         desk_nonce=req.get("desk_nonce"),
         idempotency_key=req.get("idempotency_key", ""),
-        approval_granted=True, desk_auth_ok=not w.get("desk"))
+        approval_granted=True, desk_auth_ok=not w.get("desk"),
+        mandate_credential=req.get("mandate"))
     dispatcher = rt.dispatcher_for(
         w, desk_auth_verifier=_auth_verifier(
             w, req.get("authorization"), req.get("idempotency_key", "")))
@@ -659,9 +680,9 @@ TOOLS = {
                     {"wallet_id": {"type": "string"}, "amount_usdc": {"type": "string"}}, ["wallet_id", "amount_usdc"]),
     "check_payment": (t_check_payment, "Dry-run a payment against the policy. Returns allow / approve / deny with the reason. Agents should call this before pay.",
                       {"wallet_id": {"type": "string"}, "to": {"type": "string"}, "amount_usdc": {"type": "string"}}, ["wallet_id", "to", "amount_usdc"]),
-    "pay": (t_pay, "Execute a payment if it is inside the granted scope. Outside scope: rejected, or routed to the human approval queue if it only exceeds the approval threshold. Desk-bound wallets must pass authorization {nonce, signature} from the bound desk key (v2 canonical message; v1 signatures still accepted).",
+    "pay": (t_pay, "Execute a payment if it is inside the granted scope. Outside scope: rejected, or routed to the human approval queue if it only exceeds the approval threshold. Desk-bound wallets must pass authorization {nonce, signature} from the bound desk key (v2 canonical message; v1 signatures still accepted). An optional Herald mandate credential (mandate: compact JWS) is verified at dispatch — signature, expiry and status-list revocation — before signing; a revoked/expired mandate is refused and the accepted mandate's jti is bound onto the receipt.",
             {"wallet_id": {"type": "string"}, "to": {"type": "string"}, "amount_usdc": {"type": "string"}, "memo": {"type": "string"},
-             "authorization": {"type": "object"}, "idempotency_key": {"type": "string"}}, ["wallet_id", "to", "amount_usdc"]),
+             "authorization": {"type": "object"}, "idempotency_key": {"type": "string"}, "mandate": {"type": "string"}}, ["wallet_id", "to", "amount_usdc"]),
     "approve_payment": (lambda s, a: t_resolve_approval(s, a, True), "Owner approves a pending payment request; it executes immediately (subject to the dispatch-time policy re-check and the pending TTL).",
                         {"request_id": {"type": "string"}}, ["request_id"]),
     "deny_payment": (lambda s, a: t_resolve_approval(s, a, False), "Owner denies a pending payment request.",
