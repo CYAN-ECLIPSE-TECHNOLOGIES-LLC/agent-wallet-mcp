@@ -42,7 +42,8 @@ class State(str, Enum):
 
 LEGAL_TRANSITIONS = {
     State.QUEUED: {State.AUTHORIZED, State.EXPIRED, State.CANCELLED},
-    State.AUTHORIZED: {State.BUILT, State.QUEUED, State.CANCELLED},
+    State.AUTHORIZED: {State.BUILT, State.QUEUED, State.CANCELLED,
+                       State.EXPIRED},
     State.BUILT: {State.SIGNED, State.QUEUED},
     State.SIGNED: {State.SUBMITTED, State.QUEUED},
     State.SUBMITTED: {State.CONFIRMED, State.UNKNOWN, State.QUEUED},
@@ -108,13 +109,31 @@ class PaymentIntent:
     artifact: dict | None = None  # built artifact only; never a signature
     tx_ref: str | None = None
     receipts: list = field(default_factory=list)
+    # Intent TTL (bench condition C-3 / defect D-4, silas S5.3
+    # pending-expiry): an intent that sits queued/authorized past its
+    # TTL is refused APPROVAL_EXPIRED and moved to EXPIRED - a stale
+    # authorization is never dispatched. None = no TTL (B0 behaviour).
+    created_at: int = field(default_factory=lambda: int(time.time()))
+    ttl_s: int | None = None
 
     def __post_init__(self):
         if isinstance(self.amount_base, bool) or not isinstance(self.amount_base, int):
             raise ValueError("amount_base must be an int of base units")
         if self.amount_base <= 0:
             raise ValueError("amount_base must be positive")
+        if self.ttl_s is not None and (isinstance(self.ttl_s, bool)
+                                       or not isinstance(self.ttl_s, int)
+                                       or self.ttl_s <= 0):
+            raise ValueError("ttl_s must be a positive int or None")
         self.history.append((self.state.value, int(time.time()), "created"))
+
+    @property
+    def expires_at(self) -> int | None:
+        return None if self.ttl_s is None else self.created_at + self.ttl_s
+
+    def is_expired(self, at: int) -> bool:
+        exp = self.expires_at
+        return exp is not None and at > exp
 
     def transition(self, target: State, note: str = "") -> None:
         if target not in LEGAL_TRANSITIONS[self.state]:
@@ -213,11 +232,29 @@ class Dispatcher:
                               code if isinstance(code, RefusalCode) else None,
                               reason)
 
+    def _expiry_refusal(self, intent: PaymentIntent) -> DispatchResult | None:
+        """C-3/D-4: refuse an intent past its TTL. Moves it to EXPIRED
+        when the state machine allows; never consumes the nonce."""
+        if not intent.is_expired(self._clock()):
+            return None
+        if State.EXPIRED in LEGAL_TRANSITIONS[intent.state]:
+            intent.transition(State.EXPIRED,
+                              f"intent TTL {intent.ttl_s}s elapsed")
+        intent.refusal_codes.append(RefusalCode.APPROVAL_EXPIRED.value)
+        return DispatchResult(
+            "refused", intent, RefusalCode.APPROVAL_EXPIRED,
+            f"payment intent expired at {intent.expires_at} "
+            f"(ttl {intent.ttl_s}s); a stale authorization is never "
+            "dispatched")
+
     def authorize(self, intent: PaymentIntent) -> DispatchResult:
         """Intent-time check. allow -> AUTHORIZED; approve -> stays QUEUED
         until the owner grants approval; deny -> stays QUEUED with code."""
         if intent.state != State.QUEUED:
             raise TransitionError("authorize requires a QUEUED intent")
+        expired = self._expiry_refusal(intent)
+        if expired is not None:
+            return expired
         verdict = self._evaluate(intent)
         if verdict.decision == "deny":
             return self._refuse(intent, verdict.code, verdict.reason)
@@ -250,6 +287,9 @@ class Dispatcher:
         if intent.state != State.AUTHORIZED:
             raise TransitionError("dispatch requires AUTHORIZED (or QUEUED, "
                                   "which is authorized first)")
+        expired = self._expiry_refusal(intent)
+        if expired is not None:
+            return expired
         row = self.registry.require(intent.asset_id)
         adapter = self.adapters.get(row["family"])
         verdict = self._evaluate(intent)
@@ -313,30 +353,31 @@ class Dispatcher:
         intent.transition(State.SUBMITTED, f"submitted: {tx_ref}")
         status = adapter.getStatus(tx_ref) if hasattr(adapter, "getStatus") \
             else "FINAL"
-        provisional = build_receipt(
+        # Receipt contract (C-2 / defect D-3): exactly ONE receipt per
+        # state transition. A dispatch reaching FINAL in one step emits
+        # exactly one receipt (FINAL, provisional=false) - B0 previously
+        # emitted a duplicate FINAL pair that a receipt-counting
+        # consumer would read as two payments. A dispatch reaching only
+        # CONFIRMED emits one provisional receipt; the FINAL receipt
+        # belongs to the later transition that actually reaches FINAL.
+        receipt = build_receipt(
             payment_id=intent.intent_id, intent_id=intent.intent_id,
             wallet_id=intent.wallet_id, asset_row=row,
             amount_base=intent.amount_base, fee_quote=verdict.fee_quote,
             verdict=verdict, policy=self.policy, tx_ref=tx_ref,
-            finality_state="CONFIRMED" if status != "FINAL" else "FINAL",
-            desk_auth_nonce=intent.desk_nonce, provisional=(status != "FINAL"))
-        intent.receipts.append(provisional)
+            finality_state="FINAL" if status == "FINAL" else "CONFIRMED",
+            desk_auth_nonce=intent.desk_nonce,
+            provisional=(status != "FINAL"))
+        intent.receipts.append(receipt)
         if status == "FINAL":
             intent.transition(State.CONFIRMED, "sandbox finality is instant")
             intent.transition(State.FINAL, "final")
-            final_receipt = build_receipt(
-                payment_id=intent.intent_id, intent_id=intent.intent_id,
-                wallet_id=intent.wallet_id, asset_row=row,
-                amount_base=intent.amount_base, fee_quote=verdict.fee_quote,
-                verdict=verdict, policy=self.policy, tx_ref=tx_ref,
-                finality_state="FINAL", desk_auth_nonce=intent.desk_nonce,
-                provisional=False)
-            intent.receipts.append(final_receipt)
             self.tracker.record(intent.wallet_id, intent.asset_id,
-                                intent.amount_base, verdict.usd_value_micro)
+                                intent.amount_base, verdict.usd_value_micro,
+                                verdict.peg_value_micro)
             return DispatchResult("executed", intent, None,
-                                  "executed and FINAL (sandbox)", final_receipt)
+                                  "executed and FINAL (sandbox)", receipt)
         intent.transition(State.CONFIRMED, "confirmed, not yet final")
         return DispatchResult("executed", intent, None,
                               "submitted; provisional receipt issued",
-                              provisional)
+                              receipt)
