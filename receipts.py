@@ -2,9 +2,11 @@
 
 A receipt binds: asset_id, chain_id, amount_base_units (int), fee,
 policy_hash, policy_verdict, refusal_code, oracle references/values (or a
-price_unverified flag), and the finality state. Identity fields
-agent_id / principal_commitment / mandate_id are reserved and null in B0
-(populated by the identity track, I-phases). The hash is SHA-256 over the
+price_unverified flag plus oracle_failure_code naming WHY the price is
+unverified — F-2), and the finality state. Identity fields
+agent_id / principal_commitment remain reserved; mandate_id is populated
+at dispatch when a Herald mandate credential was presented and verified
+(F-1 wiring). The hash is SHA-256 over the
 canonical JSON of the receipt without the hash field; receipts are
 marked provisional vs FINAL. No float or bool may appear in amount
 fields - build_receipt validates recursively.
@@ -86,12 +88,15 @@ def build_receipt(*, payment_id: str, intent_id: str, wallet_id: str,
         "oracle_ref": (verdict.oracle_ref if verdict is not None else None),
         "price_unverified": bool(verdict.price_unverified)
         if verdict is not None else False,
+        "oracle_failure_code": (verdict.oracle_failure_code
+                                if verdict is not None else None),
         "depeg_bps": (verdict.depeg_bps if verdict is not None else None),
         "tx_ref": tx_ref,
         "finality": {"state": finality_state,
                      "provisional": bool(provisional)},
         "desk_auth_nonce": desk_auth_nonce,
-        # Identity binding fields: reserved in B0, populated by I-phases.
+        # Identity binding fields: agent_id / principal_commitment stay
+        # reserved; mandate_id binds the verified mandate's jti (F-1).
         "agent_id": agent_id,
         "principal_commitment": principal_commitment,
         "mandate_id": mandate_id,

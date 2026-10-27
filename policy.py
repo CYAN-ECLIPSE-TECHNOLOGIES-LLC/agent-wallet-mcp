@@ -136,6 +136,13 @@ class Verdict:
     fee_quote: object | None = None
     depeg_bps: int | None = None
     peg_value_micro: int | None = None  # value in peg-target currency micro
+    # F-2 (testnet bench finding): when a price lands unverified, WHY —
+    # the oracle failure code (ORACLE_DIVERGENCE / PRICE_STALE /
+    # ORACLE_UNAVAILABLE / ...). The cause survives into receipts
+    # instead of collapsing into a bare price_unverified flag whose
+    # verdict code reads None (divergence was indistinguishable from
+    # a feed simply being down).
+    oracle_failure_code: str | None = None
 
 
 def _require_int(value, name: str) -> int:
@@ -224,6 +231,11 @@ def validate_grant(registry, adapters: dict, wallet_id: str, granted_by: str,
 
 
 DEFAULT_MAX_STALENESS_S = 300
+
+
+def _ofc(failure: RefusalCode | None) -> str | None:
+    """F-2 helper: the oracle failure as its stable string code."""
+    return failure.value if failure is not None else None
 
 
 def _fresh_or_raise(snap, now: int, max_staleness_s: int) -> None:
@@ -322,12 +334,15 @@ def evaluate_payment(*, registry, adapters: dict, oracle: Oracle | None,
     oracle_ref = None
     depeg_bps = None
     forced_approval = False
+    oracle_failure: RefusalCode | None = None  # F-2: cause, when unverified
     peg = row["peg"]
     if oracle is None:
         if peg is None:
             return Verdict("deny", "no oracle: volatile asset cannot be "
-                           "valued", RefusalCode.ORACLE_UNAVAILABLE)
+                           "valued", RefusalCode.ORACLE_UNAVAILABLE,
+                           oracle_failure_code="ORACLE_UNAVAILABLE")
         price_unverified = True
+        oracle_failure = RefusalCode.ORACLE_UNAVAILABLE
     else:
         quote_ccy = peg["target"] if peg else "USD"
         try:
@@ -340,10 +355,14 @@ def evaluate_payment(*, registry, adapters: dict, oracle: Oracle | None,
                         e.code, RefusalCode.ORACLE_UNAVAILABLE)
             if peg is None:
                 return Verdict("deny", f"oracle failure for volatile asset: "
-                               f"{e}", code)
+                               f"{e}", code,
+                               oracle_failure_code=code.value)
             # Pegged asset, oracle down: per-asset caps are unit-exact and
             # may proceed, but the aggregate check degrades - see below.
+            # F-2: the CAUSE is preserved on the verdict (and so on the
+            # receipt), never collapsed into the bare unverified flag.
             price_unverified = True
+            oracle_failure = code
             snap = None
             price = None
         if snap is not None:
@@ -375,8 +394,12 @@ def evaluate_payment(*, registry, adapters: dict, oracle: Oracle | None,
                                                 usd_snap.price_decimal())
                     oracle_ref["usd_price"] = usd_snap.price
                     oracle_ref["usd_source"] = usd_snap.source
-                except OracleError:
+                except OracleError as e2:
                     price_unverified = True
+                    oracle_failure = {
+                        "PRICE_STALE": RefusalCode.PRICE_STALE,
+                        "ORACLE_DIVERGENCE": RefusalCode.ORACLE_DIVERGENCE}.get(
+                            e2.code, RefusalCode.ORACLE_UNAVAILABLE)
     if usd_value is not None:
         if spent_today_usd_micro + usd_value > policy.aggregate_daily_cap_usd_micro:
             return Verdict("deny", "amount would exceed the USD-normalized "
@@ -384,7 +407,8 @@ def evaluate_payment(*, registry, adapters: dict, oracle: Oracle | None,
                            usd_value_micro=usd_value,
                            price_unverified=price_unverified,
                            oracle_ref=oracle_ref, depeg_bps=depeg_bps,
-                           peg_value_micro=peg_value)
+                           peg_value_micro=peg_value,
+                           oracle_failure_code=_ofc(oracle_failure))
     elif price_unverified and amount > ap.approval_above_base:
         # No trustworthy USD value and the amount is non-trivial: the
         # aggregate cap cannot be proven, so a human must approve.
@@ -401,7 +425,8 @@ def evaluate_payment(*, registry, adapters: dict, oracle: Oracle | None,
                     usd_value_micro=usd_value,
                     price_unverified=price_unverified,
                     oracle_ref=oracle_ref, depeg_bps=depeg_bps,
-                    peg_value_micro=peg_value)
+                    peg_value_micro=peg_value,
+                    oracle_failure_code=_ofc(oracle_failure))
         else:
             # A peg cap exists but the peg value cannot be proven:
             # never wave it through silently.
@@ -412,11 +437,13 @@ def evaluate_payment(*, registry, adapters: dict, oracle: Oracle | None,
     if balance.state == "frozen":
         return Verdict("deny", "balance is issuer-frozen and never spendable",
                        RefusalCode.BALANCE_ISSUER_FROZEN,
-                       usd_value_micro=usd_value, oracle_ref=oracle_ref)
+                       usd_value_micro=usd_value, oracle_ref=oracle_ref,
+                       oracle_failure_code=_ofc(oracle_failure))
     if balance.state == "absent" or balance.amount_base < amount:
         return Verdict("deny", "insufficient spendable balance",
                        RefusalCode.INSUFFICIENT_BALANCE,
-                       usd_value_micro=usd_value, oracle_ref=oracle_ref)
+                       usd_value_micro=usd_value, oracle_ref=oracle_ref,
+                       oracle_failure_code=_ofc(oracle_failure))
 
     # ---- fee quote + gas balance
     quote = fee_quote if fee_quote is not None else adapter.quoteFee(
@@ -425,11 +452,13 @@ def evaluate_payment(*, registry, adapters: dict, oracle: Oracle | None,
     if quote.is_expired(now):
         return Verdict("deny", "fee quote has expired",
                        RefusalCode.QUOTE_EXPIRED, usd_value_micro=usd_value,
-                       oracle_ref=oracle_ref)
+                       oracle_ref=oracle_ref,
+                       oracle_failure_code=_ofc(oracle_failure))
     if ap.max_fee_base is not None and quote.amount_base > ap.max_fee_base:
         return Verdict("deny", "fee quote exceeds the policy fee cap",
                        RefusalCode.FEE_OVER_CAP, usd_value_micro=usd_value,
-                       oracle_ref=oracle_ref, fee_quote=quote)
+                       oracle_ref=oracle_ref, fee_quote=quote,
+                       oracle_failure_code=_ofc(oracle_failure))
     if quote.amount_base > 0:
         fee_balance = adapter.readBalance(from_address, quote.fee_asset_id)
         if quote.fee_asset_id == asset_id:
@@ -443,13 +472,15 @@ def evaluate_payment(*, registry, adapters: dict, oracle: Oracle | None,
             return Verdict("deny", "insufficient gas/fee balance",
                            RefusalCode.INSUFFICIENT_GAS_BALANCE,
                            usd_value_micro=usd_value, oracle_ref=oracle_ref,
-                           fee_quote=quote)
+                           fee_quote=quote,
+                           oracle_failure_code=_ofc(oracle_failure))
 
     health = adapter.health()
     if not health.get("ok"):
         return Verdict("deny", f"adapter for {row['family']} is unhealthy",
                        RefusalCode.CHAIN_UNHEALTHY, usd_value_micro=usd_value,
-                       oracle_ref=oracle_ref, fee_quote=quote)
+                       oracle_ref=oracle_ref, fee_quote=quote,
+                       oracle_failure_code=_ofc(oracle_failure))
 
     if forced_approval:
         return Verdict("approve", "depeg warning band or unverified price: "
@@ -457,19 +488,22 @@ def evaluate_payment(*, registry, adapters: dict, oracle: Oracle | None,
                        usd_value_micro=usd_value,
                        price_unverified=price_unverified,
                        oracle_ref=oracle_ref, fee_quote=quote,
-                       depeg_bps=depeg_bps, peg_value_micro=peg_value)
+                       depeg_bps=depeg_bps, peg_value_micro=peg_value,
+                       oracle_failure_code=_ofc(oracle_failure))
     if amount > ap.approval_above_base:
         return Verdict("approve", "amount exceeds the no-approval threshold - "
                        "human approval required", None,
                        usd_value_micro=usd_value,
                        price_unverified=price_unverified,
                        oracle_ref=oracle_ref, fee_quote=quote,
-                       depeg_bps=depeg_bps, peg_value_micro=peg_value)
+                       depeg_bps=depeg_bps, peg_value_micro=peg_value,
+                       oracle_failure_code=_ofc(oracle_failure))
     return Verdict("allow", "within granted scope", None,
                    usd_value_micro=usd_value,
                    price_unverified=price_unverified, oracle_ref=oracle_ref,
                    fee_quote=quote, depeg_bps=depeg_bps,
-                   peg_value_micro=peg_value)
+                   peg_value_micro=peg_value,
+                   oracle_failure_code=_ofc(oracle_failure))
 
 
 # ------------------------------------------------------------ dict codec
