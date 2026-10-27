@@ -43,11 +43,7 @@ class DeskSigner:
         self.wallet_id = env.get("wallet_id")  # set at issuance binding
 
     # -- sign-only API ---------------------------------------------------
-    def sign_spend(self, *, wallet_id: str, to: str, amount_micro: int,
-                   memo: str, nonce: int) -> str:
-        """Sign one spend authorization. Refuses if this desk key is
-        bound to a different wallet (cross-desk/cross-wallet isolation
-        enforced at the signer, before the server even sees it)."""
+    def _sign(self, msg: bytes, wallet_id: str) -> str:
         if self.wallet_id is not None and wallet_id != self.wallet_id:
             raise DeskSignerError(
                 f"refused: desk {self.desk_id} key is bound to wallet "
@@ -60,11 +56,31 @@ class DeskSigner:
             acct = Account.from_key(raw_key)
             if acct.address.lower() != self.address.lower():
                 raise DeskSignerError("decrypted key does not match envelope address")
-            msg = desk_verify.spend_message(wallet_id, to, amount_micro, memo, nonce)
             signed = Account.sign_message(encode_defunct(msg), raw_key)
             return signed.signature.hex()
         finally:
             raw_key = None  # transient only; drop the reference
+
+    def sign_spend(self, *, wallet_id: str, to: str, amount_micro: int,
+                   memo: str, nonce: int) -> str:
+        """Sign one v1 spend authorization (the certified v0.2.0
+        message). Refuses if this desk key is bound to a different
+        wallet (cross-desk/cross-wallet isolation enforced at the
+        signer, before the server even sees it)."""
+        msg = desk_verify.spend_message(wallet_id, to, amount_micro, memo, nonce)
+        return self._sign(msg, wallet_id)
+
+    def sign_spend_v2(self, *, wallet_id: str, asset_id: str,
+                      chain_id: str, to: str, amount_base: int,
+                      memo: str, nonce: int, idempotency_key: str) -> str:
+        """Sign one v2 spend authorization (silas-view S3.2): the
+        signature binds wallet + asset x chain + amount in base units
+        + recipient + memo + nonce + idempotency key. Same binding
+        refusal as v1."""
+        msg = desk_verify.spend_message_v2(
+            wallet_id, asset_id, chain_id, to, amount_base, memo, nonce,
+            idempotency_key)
+        return self._sign(msg, wallet_id)
 
 
 def create_desk_key(secrets_dir, master_key_path, desk_id: str, purpose: str) -> dict:

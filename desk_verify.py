@@ -12,9 +12,56 @@ import hashlib
 
 # ---------------------------------------------------------------- spend msg
 def spend_message(wallet_id: str, to: str, amount_micro: int, memo: str, nonce: int) -> bytes:
-    """Canonical bytes a desk key signs to authorize one spend."""
+    """Canonical bytes a desk key signs to authorize one spend (v1).
+
+    v1 remains the message of the certified v0.2.0 surface and its
+    wallets are not migrated under it (silas-view S3.2); the B0/B1
+    integrated server uses v2 below and accepts v1 as a fallback."""
     return (f"agent-wallet-spend/v1|{wallet_id}|{to}|{int(amount_micro)}"
             f"|{memo}|{int(nonce)}").encode()
+
+
+def spend_message_v2(wallet_id: str, asset_id: str, chain_id: str,
+                     to: str, amount_base: int, memo: str, nonce: int,
+                     idempotency_key: str) -> bytes:
+    """Canonical desk-authorization v2 bytes (silas-view S3.2). Same
+    secp256k1 desk key, EIP-191 digest; the message now binds the
+    authorization to the exact asset x chain and the amount in base
+    units (v1 bound only a bare micro amount), plus an idempotency key
+    so one signature authorizes exactly one logical payment:
+
+        agent-wallet-spend/v2|{wallet_id}|{asset_id}|{chain_id}|{to}|
+            {amount_base}|{memo}|{nonce}|{idempotency_key}
+    """
+    return (f"agent-wallet-spend/v2|{wallet_id}|{asset_id}|{chain_id}|{to}"
+            f"|{int(amount_base)}|{memo}|{int(nonce)}"
+            f"|{idempotency_key}").encode()
+
+
+def verify_spend_v2(public_key: bytes, signature: bytes, *,
+                    wallet_id: str, asset_id: str, chain_id: str,
+                    to: str, amount_base, memo: str, nonce,
+                    idempotency_key: str) -> bool:
+    """True iff `signature` is a valid desk signature over the v2
+    canonical message for exactly these intent fields. Never raises."""
+    try:
+        msg = spend_message_v2(wallet_id, asset_id, chain_id, to,
+                               amount_base, memo, nonce, idempotency_key)
+    except Exception:
+        return False
+    return ecdsa_verify(public_key, signature, spend_digest(msg))
+
+
+def verify_spend_v1(public_key: bytes, signature: bytes, *,
+                    wallet_id: str, to: str, amount_micro, memo: str,
+                    nonce) -> bool:
+    """True iff `signature` is valid over the v1 canonical message.
+    Never raises."""
+    try:
+        msg = spend_message(wallet_id, to, amount_micro, memo, nonce)
+    except Exception:
+        return False
+    return ecdsa_verify(public_key, signature, spend_digest(msg))
 
 
 def spend_digest(message: bytes) -> bytes:
