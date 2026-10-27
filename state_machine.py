@@ -115,6 +115,9 @@ class PaymentIntent:
     # authorization is never dispatched. None = no TTL (B0 behaviour).
     created_at: int = field(default_factory=lambda: int(time.time()))
     ttl_s: int | None = None
+    # Client-supplied idempotency key (bound into the desk-auth v2
+    # message; one signature authorizes one logical payment).
+    idempotency_key: str = ""
 
     def __post_init__(self):
         if isinstance(self.amount_base, bool) or not isinstance(self.amount_base, int):
