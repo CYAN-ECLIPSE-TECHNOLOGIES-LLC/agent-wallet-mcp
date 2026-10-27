@@ -118,6 +118,12 @@ class PaymentIntent:
     # Client-supplied idempotency key (bound into the desk-auth v2
     # message; one signature authorizes one logical payment).
     idempotency_key: str = ""
+    # Desk-auth v2 presentation for chain-backed dispatch (B1 testnet):
+    # the dispatcher presents these to the fund signer, which refuses
+    # without a valid authorization. Signature is hex; the public key
+    # is the desk key's 64-byte X||Y. Neither is key material.
+    desk_auth_signature: str | None = None
+    desk_public_key: bytes | None = None
 
     def __post_init__(self):
         if isinstance(self.amount_base, bool) or not isinstance(self.amount_base, int):
@@ -207,6 +213,11 @@ class Dispatcher:
         self.max_staleness_s = max_staleness_s
         # desk_auth_verifier(intent) -> bool; default: intent.desk_auth_ok
         self._verify_auth = desk_auth_verifier or (lambda i: i.desk_auth_ok)
+        # B1 testnet: last verdict per intent (watcher receipt factory)
+        # + intents whose spend has already been recorded in the tracker
+        # (recorded exactly once, at FINAL).
+        self._last_verdict: dict = {}
+        self._tracker_recorded: set = set()
 
     def _evaluate(self, intent: PaymentIntent, fee_quote=None):
         return evaluate_payment(
@@ -326,17 +337,56 @@ class Dispatcher:
                 code = RefusalCode.CHAIN_UNHEALTHY
             return self._refuse(intent, code, str(e))
         from families.base import AdapterNotImplemented
+        # ---- chain-backed path (B1 testnet): the dispatcher presents
+        # the desk-auth v2 authorization to the fund signer BEFORE the
+        # desk nonce is consumed. Any signer refusal is a check error:
+        # the intent returns to QUEUED and the nonce is never burned.
+        signed_artifact = None
+        if getattr(adapter, "chain_backed", False):
+            if intent.desk_auth_signature is None or \
+                    intent.desk_public_key is None:
+                return self._refuse(
+                    intent, RefusalCode.DESK_AUTH_INVALID,
+                    "chain-backed dispatch requires the desk-auth v2 "
+                    "signature + desk public key to present to the "
+                    "fund signer")
+            try:
+                finalized = adapter.finalize_unsigned(artifact_preview)
+                authorized_intent = {
+                    "wallet_id": intent.wallet_id,
+                    "asset_id": intent.asset_id,
+                    "chain_id": intent.chain_id, "to": intent.to,
+                    "amount_base": intent.amount_base,
+                    "memo": intent.memo, "desk_nonce": intent.desk_nonce,
+                    "idempotency_key": intent.idempotency_key,
+                    "desk_auth_signature": intent.desk_auth_signature}
+                signed_artifact = adapter.sign(
+                    finalized, authorized_intent=authorized_intent,
+                    desk_public_key=intent.desk_public_key,
+                    fee_quote_max_base=verdict.fee_quote.amount_base
+                    if verdict.fee_quote is not None else None)
+            except Exception as e:
+                code = getattr(e, "code", "CHAIN_UNHEALTHY")
+                try:
+                    code = RefusalCode(code)
+                except ValueError:
+                    code = RefusalCode.CHAIN_UNHEALTHY
+                return self._refuse(intent, code, str(e))
         # ---- every check passed: consume the nonce exactly once
         try:
             self.nonces.consume(intent.wallet_id, intent.desk_nonce)
         except NonceError as e:
             return self._refuse(intent, RefusalCode.DESK_AUTH_NONCE, str(e))
-        intent.artifact = artifact_preview
+        intent.artifact = signed_artifact or artifact_preview
         intent.transition(State.BUILT, "unsigned artifact built")
-        intent.transition(State.SIGNED, "B0 sandbox: no chain signature; "
-                                        "desk-auth is the authorization")
+        intent.transition(State.SIGNED,
+                            "fund-signer signature obtained (testnet)"
+                            if signed_artifact else
+                            "B0 sandbox: no chain signature; "
+                            "desk-auth is the authorization")
+        self._last_verdict[intent.intent_id] = verdict
         try:
-            tx_ref = adapter.submit(artifact_preview)
+            tx_ref = adapter.submit(intent.artifact)
         except AdapterNotImplemented as e:
             # Should be unreachable for sandbox; for safety the intent
             # returns to QUEUED. The nonce stays consumed only if submit
@@ -356,6 +406,21 @@ class Dispatcher:
         intent.transition(State.SUBMITTED, f"submitted: {tx_ref}")
         status = adapter.getStatus(tx_ref) if hasattr(adapter, "getStatus") \
             else "FINAL"
+        if status in ("SUBMITTED", "UNKNOWN"):
+            # No receipt yet: provisional belongs to CONFIRMED, FINAL
+            # to FINAL. Timeouts/uncertainty route to UNKNOWN in the
+            # watcher - never silently FINAL, never FAILED.
+            if status == "UNKNOWN":
+                intent.transition(State.UNKNOWN,
+                                  "submission outcome unobserved")
+            return DispatchResult(
+                "submitted", intent, None,
+                f"submitted ({status}); no receipt until CONFIRMED", None)
+        if status == "FAILED_TERMINAL":
+            return DispatchResult(
+                "failed_terminal", intent, None,
+                "on-chain terminal failure (tx reverted); intent stays "
+                "SUBMITTED for audit, no receipt emitted", None)
         # Receipt contract (C-2 / defect D-3): exactly ONE receipt per
         # state transition. A dispatch reaching FINAL in one step emits
         # exactly one receipt (FINAL, provisional=false) - B0 previously
@@ -373,14 +438,52 @@ class Dispatcher:
             provisional=(status != "FINAL"))
         intent.receipts.append(receipt)
         if status == "FINAL":
-            intent.transition(State.CONFIRMED, "sandbox finality is instant")
+            intent.transition(State.CONFIRMED, "finality reached")
             intent.transition(State.FINAL, "final")
-            self.tracker.record(intent.wallet_id, intent.asset_id,
-                                intent.amount_base, verdict.usd_value_micro,
-                                verdict.peg_value_micro)
+            self._record_spend(intent, verdict)
             return DispatchResult("executed", intent, None,
-                                  "executed and FINAL (sandbox)", receipt)
+                                  "executed and FINAL", receipt)
         intent.transition(State.CONFIRMED, "confirmed, not yet final")
         return DispatchResult("executed", intent, None,
                               "submitted; provisional receipt issued",
                               receipt)
+
+    # ---- B1 testnet watcher integration --------------------------------
+    def _record_spend(self, intent: PaymentIntent, verdict) -> None:
+        if intent.intent_id in self._tracker_recorded:
+            return
+        self._tracker_recorded.add(intent.intent_id)
+        self.tracker.record(intent.wallet_id, intent.asset_id,
+                            intent.amount_base,
+                            verdict.usd_value_micro if verdict else None,
+                            verdict.peg_value_micro if verdict else None)
+
+    def watch_finality(self, intent: PaymentIntent, *, timeout_s: int = 180,
+                       poll_interval_s: int = 2, sleep=None) -> dict:
+        """Drive a SUBMITTED/CONFIRMED/UNKNOWN intent to FINAL (or
+        UNKNOWN on timeout) via the FinalityWatcher, emitting the
+        provisional receipt at CONFIRMED and exactly one FINAL receipt
+        at FINAL through the receipt contract."""
+        from watcher import FinalityWatcher
+        row = self.registry.require(intent.asset_id)
+        adapter = self.adapters[row["family"]]
+        verdict = self._last_verdict.get(intent.intent_id)
+
+        def _factory(it, finality_state, provisional):
+            receipt = build_receipt(
+                payment_id=it.intent_id, intent_id=it.intent_id,
+                wallet_id=it.wallet_id, asset_row=row,
+                amount_base=it.amount_base,
+                fee_quote=verdict.fee_quote if verdict else None,
+                verdict=verdict, policy=self.policy, tx_ref=it.tx_ref,
+                finality_state=finality_state,
+                desk_auth_nonce=it.desk_nonce, provisional=provisional)
+            it.receipts.append(receipt)
+            if finality_state == "FINAL":
+                self._record_spend(it, verdict)
+            return receipt
+
+        watcher = FinalityWatcher(adapter, timeout_s=timeout_s,
+                                  poll_interval_s=poll_interval_s,
+                                  clock=self._clock, sleep=sleep)
+        return watcher.watch(intent, _factory)
