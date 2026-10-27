@@ -62,3 +62,34 @@ def testnet_store_path(env=None) -> Path:
     if raw:
         return Path(raw).expanduser()
     return Path(__file__).with_name("testnet-store.json")
+
+
+# ---------------------------------------------------------------- builders
+FUND_VAULT_DIR = Path("~/.secrets/eclipse-agent-wallet-funds")
+FUND_MASTER_NAME = "master.key"
+
+
+def fund_vault_paths() -> tuple[Path, Path]:
+    vault = FUND_VAULT_DIR.expanduser()
+    return vault, vault / FUND_MASTER_NAME
+
+
+def build_testnet_oracle(registry=None, clock=None, **kw):
+    """Two-source oracle for the cell (Coinbase + CoinGecko)."""
+    from oracle_sources import build_two_source_oracle
+    registry = registry or load_testnet_registry()
+    symbols = {aid: registry.require(aid)["symbol"]
+               for aid in TESTNET_ASSET_IDS}
+    return build_two_source_oracle(symbols, clock=clock, **kw)
+
+
+def build_testnet_adapter(registry=None, *, rpc_url=None, rpc_client=None,
+                          fund_signer=None, clock=None):
+    """Chain-backed EVM adapter for eip155:84532 only. RPC endpoint
+    from the rpc_url argument or the AGENT_WALLET_BASE_SEPOLIA_RPC env
+    var - never hard-coded."""
+    from families.evm import EvmAdapter
+    registry = registry or load_testnet_registry()
+    return EvmAdapter(registry, TESTNET_CHAIN_ID, clock=clock,
+                      chain_backed=True, rpc_url=rpc_url,
+                      rpc_client=rpc_client, fund_signer=fund_signer)
