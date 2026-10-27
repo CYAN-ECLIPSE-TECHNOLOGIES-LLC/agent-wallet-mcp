@@ -2,7 +2,7 @@
 
 **Powered by Cyan Eclipse Technologies** — https://cetech.ai · Listed on Eclipse Bazaar (eclipsebazaar.com).
 
-An MCP server that gives an AI agent a wallet it can only spend inside a
+An MCP server that gives an SI agent a wallet it can only spend inside a
 human-granted written policy: per-transaction cap, daily cap, approval
 threshold, recipient allowlist, expiry, and purpose. Payments outside the
 scope are rejected, or routed to a human approval queue when they exceed
@@ -11,7 +11,7 @@ revocation is written to an append-only audit log, and a kill switch
 (`revoke`) freezes the wallet instantly with a timestamped record.
 
 ## Who it is for
-Owners who let AI agents spend on their behalf and need provable,
+Owners who let SI agents spend on their behalf and need provable,
 scope-limited authority instead of blanket account access.
 
 ## Status
