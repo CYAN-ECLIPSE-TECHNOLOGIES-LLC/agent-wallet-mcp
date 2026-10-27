@@ -71,7 +71,7 @@ def migrate_v1_to_v2(v1: dict) -> dict:
                                   for a in policy.get("allowlist", [])],
                     "max_fee_base": None}},
             }
-        wallets[wid] = {
+        carried = {
             "id": w["id"], "owner_id": w["owner_id"],
             "label": w.get("label", ""),
             "addresses": {SANDBOX_CHAIN_ID: w["address"]},
@@ -81,6 +81,13 @@ def migrate_v1_to_v2(v1: dict) -> dict:
             "policy": policy_v2,
             "created_at": w["created_at"],
         }
+        # Desk extension state (v0.2.0) is carried verbatim when
+        # present - dropping it would make the migration lossy for
+        # desk-bound wallets (found at B1 integration, 2026-10-27).
+        for key in ("desk", "spend_nonce"):
+            if key in w:
+                carried[key] = w[key]
+        wallets[wid] = carried
     audit = []
     for e in src.get("audit") or []:
         e2 = dict(e)
