@@ -125,6 +125,12 @@ def validate_store(state) -> None:
                     if not _is_int(ap.get(key)) or ap[key] < 0:
                         raise StoreError(f"policy cap {key} for {asset_id} "
                                          "must be a non-negative int")
+                peg_cap = ap.get("daily_cap_peg_micro")
+                if peg_cap is not None and (not _is_int(peg_cap)
+                                            or peg_cap < 0):
+                    raise StoreError(f"policy cap daily_cap_peg_micro for "
+                                     f"{asset_id} must be a non-negative "
+                                     "int or null")
             if not _is_int(pol.get("aggregate_daily_cap_usd_micro")):
                 raise StoreError("aggregate cap must be an int")
     last_ts = None

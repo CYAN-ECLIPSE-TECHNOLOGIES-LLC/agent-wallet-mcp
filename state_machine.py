@@ -134,13 +134,15 @@ class DispatchResult:
 
 
 class SpendTracker:
-    """Per-wallet daily spend in base units per asset + USD micro total.
+    """Per-wallet daily spend in base units per asset + USD micro total
+    + peg-currency micro total per asset (the EURC dual cap's memory).
     Updated only on successful dispatch (never on a refusal)."""
 
     def __init__(self, clock=None):
         self._clock = clock or (lambda: int(time.time()))
         self._base: dict[tuple, int] = {}
         self._usd: dict[tuple, int] = {}
+        self._peg: dict[tuple, int] = {}
 
     def _day(self) -> int:
         return self._clock() // 86400
@@ -151,14 +153,19 @@ class SpendTracker:
     def spent_usd_micro(self, wallet_id: str) -> int:
         return self._usd.get((wallet_id, self._day()), 0)
 
+    def spent_peg_micro(self, wallet_id: str, asset_id: str) -> int:
+        return self._peg.get((wallet_id, asset_id, self._day()), 0)
+
     def record(self, wallet_id: str, asset_id: str, amount_base: int,
-               usd_micro: int | None):
+               usd_micro: int | None, peg_micro: int | None = None):
         day = self._day()
         key = (wallet_id, asset_id, day)
         self._base[key] = self._base.get(key, 0) + amount_base
         if usd_micro is not None:
             ukey = (wallet_id, day)
             self._usd[ukey] = self._usd.get(ukey, 0) + usd_micro
+        if peg_micro is not None:
+            self._peg[key] = self._peg.get(key, 0) + peg_micro
 
 
 class Dispatcher:
@@ -167,7 +174,7 @@ class Dispatcher:
     def __init__(self, *, registry, adapters: dict, oracle, policy,
                  nonces: NonceLedger | None = None,
                  tracker: SpendTracker | None = None, clock=None,
-                 desk_auth_verifier=None):
+                 desk_auth_verifier=None, max_staleness_s: int = 300):
         self.registry = registry
         self.adapters = adapters
         self.oracle = oracle
@@ -175,6 +182,7 @@ class Dispatcher:
         self.nonces = nonces if nonces is not None else NonceLedger()
         self.tracker = tracker if tracker is not None else SpendTracker(clock)
         self._clock = clock or (lambda: int(time.time()))
+        self.max_staleness_s = max_staleness_s
         # desk_auth_verifier(intent) -> bool; default: intent.desk_auth_ok
         self._verify_auth = desk_auth_verifier or (lambda i: i.desk_auth_ok)
 
@@ -188,6 +196,9 @@ class Dispatcher:
             spent_today_base=self.tracker.spent_base(intent.wallet_id,
                                                      intent.asset_id),
             spent_today_usd_micro=self.tracker.spent_usd_micro(intent.wallet_id),
+            spent_today_peg_micro=self.tracker.spent_peg_micro(
+                intent.wallet_id, intent.asset_id),
+            max_staleness_s=self.max_staleness_s,
             clock=self._clock, fee_quote=fee_quote)
 
     def _refuse(self, intent: PaymentIntent, code, reason: str) -> DispatchResult:

@@ -38,6 +38,7 @@ class RefusalCode(str, Enum):
     OVER_PER_TX_CAP = "OVER_PER_TX_CAP"
     OVER_DAILY_CAP = "OVER_DAILY_CAP"
     OVER_USD_DAILY_CAP = "OVER_USD_DAILY_CAP"
+    OVER_PEG_DAILY_CAP = "OVER_PEG_DAILY_CAP"
     INSUFFICIENT_BALANCE = "INSUFFICIENT_BALANCE"
     BALANCE_ISSUER_FROZEN = "BALANCE_ISSUER_FROZEN"
     INSUFFICIENT_GAS_BALANCE = "INSUFFICIENT_GAS_BALANCE"
@@ -84,6 +85,11 @@ class AssetPolicy:
     approval_above_base: int
     allowlist: list = field(default_factory=list)  # list[AllowlistEntry]
     max_fee_base: int | None = None  # per-pay fee ceiling, in fee asset units
+    # Second, FX-denominated daily cap (ASSET-SLATE S1: EURC policies
+    # carry dual caps - peg-currency cap + USD aggregate, first to
+    # bind). Denominated in micro-units of the asset's peg target
+    # currency (e.g. micro-EUR for EURC). None = no peg cap.
+    daily_cap_peg_micro: int | None = None
 
 
 @dataclass
@@ -109,6 +115,7 @@ class PolicyV2:
                 "daily_cap_base": ap.daily_cap_base,
                 "approval_above_base": ap.approval_above_base,
                 "max_fee_base": ap.max_fee_base,
+                "daily_cap_peg_micro": ap.daily_cap_peg_micro,
                 "allowlist": [{"family": e.family, "chain_id": e.chain_id,
                                "address": e.address, "label": e.label}
                               for e in ap.allowlist]}
@@ -128,6 +135,7 @@ class Verdict:
     oracle_ref: dict | None = None
     fee_quote: object | None = None
     depeg_bps: int | None = None
+    peg_value_micro: int | None = None  # value in peg-target currency micro
 
 
 def _require_int(value, name: str) -> int:
@@ -177,6 +185,13 @@ def validate_grant(registry, adapters: dict, wallet_id: str, granted_by: str,
         max_fee = spec.get("max_fee_base")
         if max_fee is not None:
             max_fee = _require_int(max_fee, "max_fee_base")
+        peg_cap = spec.get("daily_cap_peg_micro")
+        if peg_cap is not None:
+            peg_cap = _require_int(peg_cap, "daily_cap_peg_micro")
+            if row["peg"] is None:
+                raise Refusal(RefusalCode.AMOUNT_INVALID,
+                              "daily_cap_peg_micro requires a pegged asset "
+                              "(the cap is denominated in the peg target)")
         entries = []
         for raw in spec.get("allowlist", []):
             if not isinstance(raw, dict):
@@ -200,11 +215,33 @@ def validate_grant(registry, adapters: dict, wallet_id: str, granted_by: str,
                               f"allowlist address {entry.address!r} is not "
                               f"valid for family {entry.family}")
             entries.append(entry)
-        built[asset_id] = AssetPolicy(per_tx, daily, approval, entries, max_fee)
+        built[asset_id] = AssetPolicy(per_tx, daily, approval, entries,
+                                      max_fee, peg_cap)
     return PolicyV2(wallet_id=wallet_id, granted_by=granted_by,
                     granted_at=int(time.time()) if granted_at is None else granted_at,
                     expires_at=expires_at, purpose=purpose, assets=built,
                     aggregate_daily_cap_usd_micro=aggregate_daily_cap_usd_micro)
+
+
+DEFAULT_MAX_STALENESS_S = 300
+
+
+def _fresh_or_raise(snap, now: int, max_staleness_s: int) -> None:
+    """Policy-layer price-staleness enforcement (bench condition C-1,
+    defect D-1). Staleness used to live only inside TwoSourceOracle, so
+    any other injected Oracle implementation could feed the policy layer
+    an arbitrarily old price and have it accepted as verified. The
+    policy layer now age-checks EVERY snapshot it consumes, from any
+    oracle, and fails exactly as loudly as an oracle-side PRICE_STALE:
+    the caller degrades (pegged) or denies (volatile) per the existing
+    OracleError path - never silently verified."""
+    age = now - snap.observed_at
+    if age < 0 or age > max_staleness_s:
+        raise OracleError(
+            "PRICE_STALE",
+            f"price for {snap.asset_id}/{snap.quote} from {snap.source} "
+            f"is stale at the policy layer (age {age}s > "
+            f"{max_staleness_s}s)")
 
 
 def evaluate_payment(*, registry, adapters: dict, oracle: Oracle | None,
@@ -212,14 +249,17 @@ def evaluate_payment(*, registry, adapters: dict, oracle: Oracle | None,
                      from_address: str, asset_id: str, to: str,
                      amount_base, spent_today_base: int,
                      spent_today_usd_micro: int, clock=None,
-                     fee_quote=None) -> Verdict:
+                     fee_quote=None, spent_today_peg_micro: int = 0,
+                     max_staleness_s: int = DEFAULT_MAX_STALENESS_S
+                     ) -> Verdict:
     """The full ordered check used at intent time AND re-run in full at
     dispatch time (F4 fix). Returns a Verdict; never mutates state.
 
     Order: frozen (global, asset) -> reserve (R/P-1) -> policy present /
     unexpired -> asset enabled -> address valid -> allowlist -> per-asset
-    caps -> oracle/depeg + USD aggregate -> balance (frozen-aware) ->
-    fee quote + gas balance -> adapter health -> approval threshold.
+    caps -> oracle (freshness-checked at this layer, C-1) / depeg + USD
+    aggregate + peg-currency cap -> balance (frozen-aware) -> fee quote
+    + gas balance -> adapter health -> approval threshold.
     """
     now = int((clock or (lambda: int(time.time())))())
     amount = amount_base
@@ -277,6 +317,7 @@ def evaluate_payment(*, registry, adapters: dict, oracle: Oracle | None,
 
     # ---- oracle: depeg band + USD valuation for the aggregate cap
     usd_value = None
+    peg_value = None
     price_unverified = False
     oracle_ref = None
     depeg_bps = None
@@ -291,6 +332,7 @@ def evaluate_payment(*, registry, adapters: dict, oracle: Oracle | None,
         quote_ccy = peg["target"] if peg else "USD"
         try:
             snap = oracle.get_price(asset_id, quote_ccy)
+            _fresh_or_raise(snap, now, max_staleness_s)  # C-1
             price = snap.price_decimal()
         except OracleError as e:
             code = {"PRICE_STALE": RefusalCode.PRICE_STALE,
@@ -319,12 +361,16 @@ def evaluate_payment(*, registry, adapters: dict, oracle: Oracle | None,
                                    depeg_bps=depeg_bps, oracle_ref=oracle_ref)
                 if depeg_bps >= peg["depeg_warn_bps"]:
                     forced_approval = True
+                # Value denominated in the peg target currency (the
+                # price was quoted in it): the EURC second cap's unit.
+                peg_value = usd_value_micro(amount, row["decimals"], price)
             if quote_ccy == "USD":
                 usd_value = usd_value_micro(amount, row["decimals"], price)
             else:
                 # FX-pegged asset: USD value needs the USD quote as well.
                 try:
                     usd_snap = oracle.get_price(asset_id, "USD")
+                    _fresh_or_raise(usd_snap, now, max_staleness_s)  # C-1
                     usd_value = usd_value_micro(amount, row["decimals"],
                                                 usd_snap.price_decimal())
                     oracle_ref["usd_price"] = usd_snap.price
@@ -337,11 +383,29 @@ def evaluate_payment(*, registry, adapters: dict, oracle: Oracle | None,
                            "aggregate daily cap", RefusalCode.OVER_USD_DAILY_CAP,
                            usd_value_micro=usd_value,
                            price_unverified=price_unverified,
-                           oracle_ref=oracle_ref, depeg_bps=depeg_bps)
+                           oracle_ref=oracle_ref, depeg_bps=depeg_bps,
+                           peg_value_micro=peg_value)
     elif price_unverified and amount > ap.approval_above_base:
         # No trustworthy USD value and the amount is non-trivial: the
         # aggregate cap cannot be proven, so a human must approve.
         forced_approval = True
+    if ap.daily_cap_peg_micro is not None:
+        # EURC dual cap (ASSET-SLATE S1): the peg-currency cap and the
+        # USD aggregate cap both bind; whichever is hit first refuses.
+        if peg_value is not None:
+            if spent_today_peg_micro + peg_value > ap.daily_cap_peg_micro:
+                return Verdict(
+                    "deny", "amount would exceed the peg-currency "
+                    f"({peg['target']}) daily cap",
+                    RefusalCode.OVER_PEG_DAILY_CAP,
+                    usd_value_micro=usd_value,
+                    price_unverified=price_unverified,
+                    oracle_ref=oracle_ref, depeg_bps=depeg_bps,
+                    peg_value_micro=peg_value)
+        else:
+            # A peg cap exists but the peg value cannot be proven:
+            # never wave it through silently.
+            forced_approval = True
 
     # ---- balances: spendable / frozen / absent are different facts
     balance = adapter.readBalance(from_address, asset_id)
@@ -393,15 +457,84 @@ def evaluate_payment(*, registry, adapters: dict, oracle: Oracle | None,
                        usd_value_micro=usd_value,
                        price_unverified=price_unverified,
                        oracle_ref=oracle_ref, fee_quote=quote,
-                       depeg_bps=depeg_bps)
+                       depeg_bps=depeg_bps, peg_value_micro=peg_value)
     if amount > ap.approval_above_base:
         return Verdict("approve", "amount exceeds the no-approval threshold - "
                        "human approval required", None,
                        usd_value_micro=usd_value,
                        price_unverified=price_unverified,
                        oracle_ref=oracle_ref, fee_quote=quote,
-                       depeg_bps=depeg_bps)
+                       depeg_bps=depeg_bps, peg_value_micro=peg_value)
     return Verdict("allow", "within granted scope", None,
                    usd_value_micro=usd_value,
                    price_unverified=price_unverified, oracle_ref=oracle_ref,
-                   fee_quote=quote, depeg_bps=depeg_bps)
+                   fee_quote=quote, depeg_bps=depeg_bps,
+                   peg_value_micro=peg_value)
+
+
+# ------------------------------------------------------------ dict codec
+# Persistence shape for PolicyV2 (the ledger v2 store keeps policies as
+# plain dicts). Round-trip is exact: policy_from_dict(p.policy_hash())
+# equals p.policy_hash() for any grant validate_grant can build.
+
+def asset_policy_to_dict(ap: AssetPolicy) -> dict:
+    return {"per_tx_cap_base": ap.per_tx_cap_base,
+            "daily_cap_base": ap.daily_cap_base,
+            "approval_above_base": ap.approval_above_base,
+            "max_fee_base": ap.max_fee_base,
+            "daily_cap_peg_micro": ap.daily_cap_peg_micro,
+            "allowlist": [{"family": e.family, "chain_id": e.chain_id,
+                           "address": e.address, "label": e.label}
+                          for e in ap.allowlist]}
+
+
+def policy_to_dict(p: PolicyV2) -> dict:
+    return {"granted_by": p.granted_by, "granted_at": p.granted_at,
+            "expires_at": p.expires_at, "purpose": p.purpose,
+            "aggregate_daily_cap_usd_micro":
+                p.aggregate_daily_cap_usd_micro,
+            "frozen_assets": sorted(p.frozen_assets),
+            "assets": {aid: asset_policy_to_dict(ap)
+                       for aid, ap in p.assets.items()}}
+
+
+def policy_from_dict(wallet_id: str, doc, frozen_global: bool = False
+                     ) -> PolicyV2 | None:
+    """Rebuild a PolicyV2 from its stored dict. Malformed stored state
+    raises Refusal (fail closed) rather than producing a loose policy."""
+    if doc is None:
+        return None
+    if not isinstance(doc, dict):
+        raise Refusal(RefusalCode.NO_POLICY, "stored policy is malformed")
+    try:
+        assets = {}
+        for aid, spec in (doc.get("assets") or {}).items():
+            entries = [AllowlistEntry(family=str(e["family"]),
+                                      chain_id=str(e["chain_id"]),
+                                      address=str(e["address"]),
+                                      label=str(e.get("label", "")))
+                       for e in spec.get("allowlist", [])]
+            assets[aid] = AssetPolicy(
+                per_tx_cap_base=_require_int(spec["per_tx_cap_base"],
+                                             "per_tx_cap_base"),
+                daily_cap_base=_require_int(spec["daily_cap_base"],
+                                            "daily_cap_base"),
+                approval_above_base=_require_int(
+                    spec["approval_above_base"], "approval_above_base"),
+                allowlist=entries,
+                max_fee_base=spec.get("max_fee_base"),
+                daily_cap_peg_micro=spec.get("daily_cap_peg_micro"))
+        return PolicyV2(
+            wallet_id=wallet_id,
+            granted_by=str(doc["granted_by"]),
+            granted_at=_require_int(doc["granted_at"], "granted_at"),
+            expires_at=doc.get("expires_at"), purpose=doc.get("purpose", ""),
+            assets=assets,
+            aggregate_daily_cap_usd_micro=_require_int(
+                doc["aggregate_daily_cap_usd_micro"],
+                "aggregate_daily_cap_usd_micro"),
+            frozen_global=bool(frozen_global),
+            frozen_assets=set(doc.get("frozen_assets", [])))
+    except (KeyError, TypeError, AttributeError) as e:
+        raise Refusal(RefusalCode.NO_POLICY,
+                      f"stored policy is malformed: {e}")
