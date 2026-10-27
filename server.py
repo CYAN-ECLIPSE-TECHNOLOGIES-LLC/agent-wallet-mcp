@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Eclipse Agent Wallet MCP
+# Copyright © 2026 Cyan Eclipse Technologies LLC · cetech.ai
+
 """Eclipse Agent Wallet MCP — v0 reference implementation.
 
 Powered by Cyan Eclipse Technologies (cetech.ai).
@@ -17,8 +20,17 @@ design — an agent wallet where responsibility follows SCOPE:
     immediate and provable, not "notify the bank and wait."
 
 SANDBOX ONLY: balances are simulated test USDC in a local JSON ledger.
-No real funds, no private keys, no external calls. Production rails
-(x402 / partner processors) plug in behind the same policy engine.
+No real funds move. Production rails (x402 / partner processors) plug
+in behind the same policy engine.
+
+v0.2.0 desk extension (2026-10-27): a wallet may be bound at creation
+to a desk identity — a secp256k1 key held in envelope custody outside
+this server (see desk_keys.py). Desk-bound wallets additionally require
+a valid desk signature (EIP-191 over the canonical spend message,
+verified in desk_verify.py) before any spend executes or queues for
+approval; nonces are strictly increasing per wallet. Unbound wallets
+behave exactly as v0.1.0 — the certified policy engine is unchanged.
+The desk wallet address is the key's real EVM address.
 
 Transport: MCP over stdio (newline-delimited JSON-RPC 2.0), stdlib only.
 State file: $AGENT_WALLET_LEDGER or ./ledger.json next to this file.
@@ -30,6 +42,9 @@ import sys
 import time
 import uuid
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent))
+import desk_verify
 
 LEDGER_PATH = Path(os.environ.get(
     "AGENT_WALLET_LEDGER", Path(__file__).with_name("ledger.json")))
@@ -110,13 +125,31 @@ def t_create_wallet(state, args):
     if not owner:
         raise ToolError("owner_id is required — a wallet must have a named human owner")
     wid = "wal_" + uuid.uuid4().hex[:12]
-    addr = "0x" + hashlib.sha256(wid.encode()).hexdigest()[:40]
+    desk = None
+    desk_id = str(args.get("desk_id", "")).strip()
+    desk_pubkey = str(args.get("desk_pubkey", "")).strip().lower()
+    if desk_id or desk_pubkey:
+        if not desk_id or not desk_pubkey:
+            raise ToolError("desk binding requires both desk_id and desk_pubkey")
+        try:
+            pub_bytes = bytes.fromhex(desk_pubkey)
+            addr = desk_verify.desk_address(pub_bytes)
+        except Exception:
+            raise ToolError("desk_pubkey must be a 64-byte secp256k1 public key (hex)")
+        desk = {"desk_id": desk_id, "pubkey": desk_pubkey}
+    else:
+        addr = "0x" + hashlib.sha256(wid.encode()).hexdigest()[:40]
     w = {"id": wid, "owner_id": owner, "label": args.get("label", ""),
          "address": addr, "balance_micro": 0, "frozen": False, "policy": None,
-         "created_at": now()}
+         "desk": desk, "spend_nonce": 0, "created_at": now()}
     state["wallets"][wid] = w
-    audit(state, wid, "wallet_created", owner, {"label": w["label"], "address": addr})
+    detail = {"label": w["label"], "address": addr}
+    if desk:
+        detail.update({"desk_id": desk_id, "desk_pubkey": desk_pubkey,
+                       "scope": "SANDBOX — simulated test USDC; desk-bound (signature-required)"})
+    audit(state, wid, "wallet_created", owner, detail)
     return {"wallet_id": wid, "address": addr, "owner_id": owner,
+            "desk_id": desk_id or None,
             "balance_usdc": "0.00", "status": "no policy — cannot spend yet"}
 
 
@@ -125,6 +158,7 @@ def t_get_wallet(state, args):
     return {"wallet_id": w["id"], "owner_id": w["owner_id"], "label": w["label"],
             "address": w["address"], "balance_usdc": fmt(w["balance_micro"]),
             "frozen": w["frozen"], "spent_today_usdc": fmt(spent_today(state, w["id"])),
+            "desk": w.get("desk"), "spend_nonce": w.get("spend_nonce", 0),
             "policy": w["policy"]}
 
 
@@ -171,7 +205,28 @@ def t_check_payment(state, args):
     decision, reason = check_policy(state, w, str(args["to"]), amount)
     return {"decision": decision, "reason": reason, "wallet_id": w["id"],
             "to": args["to"], "amount_usdc": fmt(amount),
+            "authorization_required": bool(w.get("desk")),
             "balance_sufficient": w["balance_micro"] >= amount}
+
+
+def verify_desk_authorization(w: dict, to: str, amount: int, memo: str, auth) -> tuple:
+    """For desk-bound wallets: (ok, reason). Checks presence, nonce
+    monotonicity, and the desk signature over the canonical spend
+    message. Pure verification — no key material on this side."""
+    if not isinstance(auth, dict):
+        return False, "desk-bound wallet: spend authorization (signature) is required"
+    try:
+        nonce = int(auth["nonce"])
+        sig = bytes.fromhex(str(auth["signature"]))
+        pub = bytes.fromhex(w["desk"]["pubkey"])
+    except Exception:
+        return False, "desk authorization malformed"
+    if nonce <= int(w.get("spend_nonce", 0)):
+        return False, f"desk authorization nonce {nonce} is not greater than last used {w.get('spend_nonce', 0)} (replay refused)"
+    msg = desk_verify.spend_message(w["id"], to, amount, memo, nonce)
+    if not desk_verify.ecdsa_verify(pub, sig, desk_verify.spend_digest(msg)):
+        return False, "desk signature invalid for this wallet/spend (cross-desk or forged authorization refused)"
+    return True, "desk authorization verified"
 
 
 def t_pay(state, args):
@@ -182,6 +237,13 @@ def t_pay(state, args):
     if decision == "deny":
         audit(state, w["id"], "payment_rejected", "agent", {"to": to, "amount_micro": amount, "reason": reason})
         return {"status": "rejected", "reason": reason}
+    if w.get("desk"):
+        ok, auth_reason = verify_desk_authorization(w, to, amount, memo, args.get("authorization"))
+        if not ok:
+            audit(state, w["id"], "payment_rejected", "agent",
+                  {"to": to, "amount_micro": amount, "reason": auth_reason})
+            return {"status": "rejected", "reason": auth_reason}
+        w["spend_nonce"] = int(args["authorization"]["nonce"])
     if w["balance_micro"] < amount:
         audit(state, w["id"], "payment_rejected", "agent", {"to": to, "amount_micro": amount, "reason": "insufficient sandbox balance"})
         return {"status": "rejected", "reason": "insufficient sandbox balance"}
@@ -194,7 +256,8 @@ def t_pay(state, args):
     w["balance_micro"] -= amount
     tx = "tx_" + uuid.uuid4().hex[:12]
     audit(state, w["id"], "payment_executed", "agent",
-          {"tx": tx, "to": to, "amount_micro": amount, "memo": memo})
+          {"tx": tx, "to": to, "amount_micro": amount, "memo": memo,
+           **({"desk_id": w["desk"]["desk_id"], "spend_nonce": w["spend_nonce"]} if w.get("desk") else {})})
     return {"status": "executed", "tx": tx, "to": to, "amount_usdc": fmt(amount),
             "balance_usdc": fmt(w["balance_micro"])}
 
@@ -240,8 +303,9 @@ def t_revoke(state, args):
 
 
 TOOLS = {
-    "create_wallet": (t_create_wallet, "Create a sandbox agent wallet owned by a named human. A wallet cannot spend until its owner grants a policy.",
-                      {"owner_id": {"type": "string"}, "label": {"type": "string"}}, ["owner_id"]),
+    "create_wallet": (t_create_wallet, "Create a sandbox agent wallet owned by a named human. A wallet cannot spend until its owner grants a policy. Optional desk binding (desk_id + desk_pubkey): the wallet takes the desk key's real EVM address and every spend then requires that desk key's signature.",
+                      {"owner_id": {"type": "string"}, "label": {"type": "string"},
+                       "desk_id": {"type": "string"}, "desk_pubkey": {"type": "string"}}, ["owner_id"]),
     "get_wallet": (t_get_wallet, "Wallet summary: balance, frozen state, spend today, active policy.",
                    {"wallet_id": {"type": "string"}}, ["wallet_id"]),
     "set_policy": (t_set_policy, "The owner grants the spending scope: per-transaction cap, daily cap, approval threshold, recipient allowlist, expiry, purpose. Returns a plain-language liability receipt. Responsibility follows this scope.",
@@ -254,8 +318,9 @@ TOOLS = {
                     {"wallet_id": {"type": "string"}, "amount_usdc": {"type": "string"}}, ["wallet_id", "amount_usdc"]),
     "check_payment": (t_check_payment, "Dry-run a payment against the policy. Returns allow / approve / deny with the reason. Agents should call this before pay.",
                       {"wallet_id": {"type": "string"}, "to": {"type": "string"}, "amount_usdc": {"type": "string"}}, ["wallet_id", "to", "amount_usdc"]),
-    "pay": (t_pay, "Execute a payment if it is inside the granted scope. Outside scope: rejected, or routed to the human approval queue if it only exceeds the approval threshold.",
-            {"wallet_id": {"type": "string"}, "to": {"type": "string"}, "amount_usdc": {"type": "string"}, "memo": {"type": "string"}}, ["wallet_id", "to", "amount_usdc"]),
+    "pay": (t_pay, "Execute a payment if it is inside the granted scope. Outside scope: rejected, or routed to the human approval queue if it only exceeds the approval threshold. Desk-bound wallets must pass authorization {nonce, signature} from the bound desk key.",
+            {"wallet_id": {"type": "string"}, "to": {"type": "string"}, "amount_usdc": {"type": "string"}, "memo": {"type": "string"},
+             "authorization": {"type": "object"}}, ["wallet_id", "to", "amount_usdc"]),
     "approve_payment": (lambda s, a: t_resolve_approval(s, a, True), "Owner approves a pending payment request; it executes immediately.",
                         {"request_id": {"type": "string"}}, ["request_id"]),
     "deny_payment": (lambda s, a: t_resolve_approval(s, a, False), "Owner denies a pending payment request.",
@@ -280,7 +345,7 @@ def handle(req: dict):
         return {"jsonrpc": "2.0", "id": rid, "result": {
             "protocolVersion": req.get("params", {}).get("protocolVersion", "2025-03-26"),
             "capabilities": {"tools": {}},
-            "serverInfo": {"name": "eclipse-agent-wallet", "version": "0.1.0"}}}
+            "serverInfo": {"name": "eclipse-agent-wallet", "version": "0.2.0"}}}
     if method == "ping":
         return {"jsonrpc": "2.0", "id": rid, "result": {}}
     if method == "tools/list":
@@ -320,3 +385,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+# Eclipse Agent Wallet MCP · © 2026 Cyan Eclipse Technologies LLC · cetech.ai

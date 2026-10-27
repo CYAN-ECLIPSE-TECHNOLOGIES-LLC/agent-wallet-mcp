@@ -16,7 +16,9 @@ This MCP server is the opposite design: **an agent wallet where responsibility f
 
 ## Status
 
-v0.1.0 reference implementation. **Sandbox only** — balances are simulated test USDC in a local JSON ledger. No real funds, no private keys, no network calls. The policy engine is the product; production payment rails (x402, partner processors) plug in behind it without changing the tool surface.
+v0.2.0 reference implementation. **Sandbox only** — balances are simulated test USDC in a local JSON ledger. No real funds move and no network calls are made. The policy engine is the product; production payment rails (x402, partner processors) plug in behind it without changing the tool surface.
+
+**Desk extension (v0.2.0, 2026-10-27):** a wallet may be bound at creation to a *desk identity* — a per-desk secp256k1 key held in envelope custody outside the server (`desk_keys.py` / `desk_envelope.py`, the Eclipse Anchor custody pattern). A desk-bound wallet takes the key's real EVM address, and every spend must carry that desk key's signature (EIP-191 over the canonical spend message; strictly increasing nonce per wallet), verified server-side in pure Python (`desk_verify.py`). Unbound wallets behave exactly as v0.1.0. Operator console: `desk_cli.py` (issue / policy / fund / signed pay / revoke). The v0.1.0 policy engine was CERTIFIED(sandbox) by the Eclipse Bazaar Test Bench on 2026-10-24; the desk extension is benched separately (see the team wallet registry record).
 
 ## Tools (10)
 
