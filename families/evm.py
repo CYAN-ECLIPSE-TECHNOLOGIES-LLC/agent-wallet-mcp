@@ -12,7 +12,8 @@ import re
 import time
 
 from .base import (AdapterError, AdapterNotImplemented, Balance,
-                   FamilyAdapter, FeeQuote, SandboxLedger)
+                   FamilyAdapter, FeeQuote, SandboxLedger,
+                   require_intent_fields)
 
 # ---------------------------------------------------------------- Keccak-256
 # Pure-Python Keccak-256 (the pre-NIST padding variant Ethereum uses;
@@ -139,6 +140,9 @@ class EvmAdapter(FamilyAdapter):
     def buildPayment(self, intent: dict) -> dict:
         """Build an UNSIGNED payment intent artifact. Never signs, never
         submits, never touches a network."""
+        require_intent_fields(intent, ("asset_id", "amount_base", "to",
+                                       "intent_id"),
+                              "EvmAdapter.buildPayment")
         row = self.registry.require(intent["asset_id"])
         if row["chain_id"] != self.chain_id or row["family"] != "evm":
             raise AdapterError("ASSET_NOT_ENABLED",
@@ -187,6 +191,8 @@ class EvmAdapter(FamilyAdapter):
         return self.ledger.read(address, asset_id)
 
     def quoteFee(self, intent: dict) -> FeeQuote:
+        require_intent_fields(intent, ("asset_id",),
+                              "EvmAdapter.quoteFee")
         row = self.registry.require(intent["asset_id"])
         gas_units = 65000 if row["transfer_method"] == "erc20" else 21000
         at = self._clock()

@@ -10,7 +10,8 @@ import re
 import time
 
 from .base import (AdapterError, Balance, FamilyAdapter, FeeQuote,
-                   SandboxLedger)
+                   SandboxLedger, require_artifact_fields,
+                   require_intent_fields)
 
 _ADDR_RE = re.compile(r"^(sandbox:[A-Za-z0-9_-]{3,}|0x[0-9a-fA-F]{40})$")
 
@@ -34,6 +35,10 @@ class SandboxAdapter(FamilyAdapter):
         return isinstance(address, str) and bool(_ADDR_RE.match(address))
 
     def buildPayment(self, intent: dict) -> dict:
+        require_intent_fields(intent, ("intent_id", "asset_id",
+                                       "from_address", "to",
+                                       "amount_base"),
+                              "SandboxAdapter.buildPayment")
         amount = intent["amount_base"]
         if isinstance(amount, bool) or not isinstance(amount, int) or amount <= 0:
             raise AdapterError("AMOUNT_INVALID", "amount_base must be a positive int")
@@ -49,6 +54,9 @@ class SandboxAdapter(FamilyAdapter):
     def submit(self, artifact: dict) -> str:
         """Apply the artifact to the sandbox ledger. Sandbox-only: there is
         no chain and no signature; policy is the gate, this is the book."""
+        require_artifact_fields(artifact, ("from", "asset_id",
+                                           "amount_base", "intent_id"),
+                                "SandboxAdapter.submit")
         self.ledger.debit(artifact["from"], artifact["asset_id"],
                           artifact["amount_base"])
         self.ledger.credit(artifact["to"], artifact["asset_id"],

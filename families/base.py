@@ -26,6 +26,35 @@ class AdapterError(Exception):
         self.code = code
 
 
+def require_intent_fields(intent, fields, who: str) -> None:
+    """C-2 / defect D-2: adapters fail TYPED on malformed intents. A
+    missing field or a non-dict intent raises
+    AdapterError(INTENT_FIELD_MISSING) - never a bare KeyError or
+    TypeError escaping the adapter surface untyped."""
+    if not isinstance(intent, dict):
+        raise AdapterError("INTENT_FIELD_MISSING",
+                           f"{who}: intent must be an object, got "
+                           f"{type(intent).__name__}")
+    missing = [f for f in fields if f not in intent]
+    if missing:
+        raise AdapterError("INTENT_FIELD_MISSING",
+                           f"{who}: intent missing field(s): "
+                           f"{', '.join(missing)}")
+
+
+def require_artifact_fields(artifact, fields, who: str) -> None:
+    """C-2: same typing discipline for built artifacts at submit time."""
+    if not isinstance(artifact, dict):
+        raise AdapterError("ARTIFACT_INVALID",
+                           f"{who}: artifact must be an object, got "
+                           f"{type(artifact).__name__}")
+    missing = [f for f in fields if f not in artifact]
+    if missing:
+        raise AdapterError("ARTIFACT_INVALID",
+                           f"{who}: artifact missing field(s): "
+                           f"{', '.join(missing)}")
+
+
 @dataclass(frozen=True)
 class Balance:
     amount_base: int
