@@ -100,6 +100,21 @@ class MalformedTests(unittest.TestCase):
             with self.assertRaises((AdapterError, TypeError), msg=repr(bad)):
                 ledger.credit(ALICE, SANDBOX_ASSET, bad)
 
+    def test_adapter_missing_fields_are_typed(self):
+        # D-2 tightening (B1): missing fields must raise AdapterError
+        # specifically - a bare KeyError no longer passes this battery.
+        from families.evm import EvmAdapter
+        evm = EvmAdapter(self.registry, "eip155:8453", clock=self.clock)
+        for fn in (lambda: evm.buildPayment({}),
+                   lambda: evm.buildPayment(None),
+                   lambda: evm.quoteFee({}),
+                   lambda: self.adapters["sandbox"].buildPayment({}),
+                   lambda: self.adapters["sandbox"].submit({})):
+            with self.assertRaises(AdapterError) as cm:
+                fn()
+            self.assertNotIsInstance(cm.exception, KeyError)
+            self.assertTrue(cm.exception.code)
+
     def test_receipt_battery(self):
         row = self.registry.require(SANDBOX_ASSET)
         for bad in (-1, 1.5, True, "5", None):
