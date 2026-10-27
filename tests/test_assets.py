@@ -19,7 +19,7 @@ def mutated(fn):
 class RegistryTests(unittest.TestCase):
     def test_shipped_registry_validates(self):
         reg = AssetRegistry()
-        self.assertEqual(len(reg.rows), 14)
+        self.assertEqual(len(reg.rows), 16)  # 14 B0 rows + 2 Base Sepolia testnet rows (B1)
         self.assertEqual([r["asset_id"] for r in reg.spend_enabled_rows()],
                          [SANDBOX_ASSET])
 

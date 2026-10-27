@@ -63,8 +63,16 @@ def validate_address_format(family: str, address) -> bool:
     return False
 
 
-def validate_registry(data) -> list[dict]:
-    """Validate raw registry data; returns the row list or raises."""
+def validate_registry(data, testnet_spend_chains=frozenset()) -> list[dict]:
+    """Validate raw registry data; returns the row list or raises.
+
+    Shipped-default rule (B0/B1): only the sandbox row may be
+    spend-enabled. A TESTNET build configuration may opt in specific
+    testnet chains via `testnet_spend_chains` (CAIP-2 ids): rows on
+    those chains whose network is exactly "testnet" may then be
+    spend-enabled IN THAT CONFIGURATION ONLY. Mainnet rows can never
+    be spend-enabled through this path - the shipped assets.json keeps
+    every non-sandbox row spend_enabled=false."""
     if not isinstance(data, dict) or not isinstance(data.get("assets"), list):
         raise RegistryError("registry must be an object with an assets list")
     rows = data["assets"]
@@ -136,10 +144,15 @@ def validate_registry(data) -> list[dict]:
             if not isinstance(addr, str) or not addr:
                 raise RegistryError(f"{aid}: bad reserve address entry")
     for row in spend_enabled_rows:
-        if row["family"] != "sandbox":
-            raise RegistryError(
-                f"{row['asset_id']}: only the sandbox row may be "
-                "spend-enabled in B0")
+        if row["family"] == "sandbox":
+            continue
+        if row["network"] == "testnet" and \
+                row["chain_id"] in testnet_spend_chains:
+            continue
+        raise RegistryError(
+            f"{row['asset_id']}: only the sandbox row may be "
+            "spend-enabled in shipped defaults (testnet rows require an "
+            "explicit testnet build configuration)")
     ids = {r["asset_id"] for r in rows}
     for row in rows:
         if row["fee_asset_id"] not in ids:
@@ -151,11 +164,12 @@ def validate_registry(data) -> list[dict]:
 class AssetRegistry:
     """Validated, read-only view over assets.json (or injected row data)."""
 
-    def __init__(self, data=None, path: Path | None = None):
+    def __init__(self, data=None, path: Path | None = None,
+                 testnet_spend_chains=frozenset()):
         if data is None:
             raw = (path or REGISTRY_PATH).read_text()
             data = json.loads(raw)
-        self.rows = validate_registry(data)
+        self.rows = validate_registry(data, testnet_spend_chains)
         self._by_id = {r["asset_id"]: r for r in self.rows}
         self.version = data.get("registry_version")
 
