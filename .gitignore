@@ -14,3 +14,4 @@ id_ecdsa*
 .DS_Store
 ledger.json
 *.log
+team-ledger.json

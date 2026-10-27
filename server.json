@@ -1,40 +1,40 @@
 {
- "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
- "name": "io.github.CYAN-ECLIPSE-TECHNOLOGIES-LLC/agent-wallet",
- "title": "Eclipse Agent Wallet MCP",
- "description": "Policy-scoped agent wallet: caps, recipient allowlist, human approvals, kill switch, audit trail.",
- "version": "0.1.0",
- "websiteUrl": "https://cetech.ai",
- "icons": [
-  {
-   "src": "https://raw.githubusercontent.com/CYAN-ECLIPSE-TECHNOLOGIES-LLC/agent-wallet-mcp/main/icon-512.png",
-   "mimeType": "image/png",
-   "sizes": [
-    "512x512"
-   ]
-  }
- ],
- "repository": {
-  "source": "github",
-  "url": "https://github.com/CYAN-ECLIPSE-TECHNOLOGIES-LLC/agent-wallet-mcp"
- },
- "packages": [
-  {
-   "registryType": "oci",
-   "identifier": "ghcr.io/cyan-eclipse-technologies-llc/agent-wallet-mcp:2842d69a363c4412a4c1347878fd27b7ca9d9aeb",
-   "runtimeHint": "docker",
-   "transport": {
-    "type": "stdio"
-   },
-   "environmentVariables": [
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.CYAN-ECLIPSE-TECHNOLOGIES-LLC/agent-wallet",
+  "title": "Eclipse Agent Wallet MCP",
+  "description": "Policy-scoped agent wallet: caps, recipient allowlist, human approvals, kill switch, audit trail.",
+  "version": "0.2.0",
+  "websiteUrl": "https://cetech.ai",
+  "icons": [
     {
-     "name": "AGENT_WALLET_LEDGER",
-     "description": "Path to the wallet ledger JSON file. Defaults to ledger.json beside the server. Sandbox reference implementation: simulated test USDC only, no real funds.",
-     "format": "filepath",
-     "isRequired": false,
-     "isSecret": false
+      "src": "https://raw.githubusercontent.com/CYAN-ECLIPSE-TECHNOLOGIES-LLC/agent-wallet-mcp/main/icon-512.png",
+      "mimeType": "image/png",
+      "sizes": [
+        "512x512"
+      ]
     }
-   ]
-  }
- ]
+  ],
+  "repository": {
+    "source": "github",
+    "url": "https://github.com/CYAN-ECLIPSE-TECHNOLOGIES-LLC/agent-wallet-mcp"
+  },
+  "packages": [
+    {
+      "registryType": "oci",
+      "identifier": "ghcr.io/cyan-eclipse-technologies-llc/agent-wallet-mcp:2842d69a363c4412a4c1347878fd27b7ca9d9aeb",
+      "runtimeHint": "docker",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "name": "AGENT_WALLET_LEDGER",
+          "description": "Path to the wallet ledger JSON file. Defaults to ledger.json beside the server. Sandbox reference implementation: simulated test USDC only, no real funds.",
+          "format": "filepath",
+          "isRequired": false,
+          "isSecret": false
+        }
+      ]
+    }
+  ]
 }
