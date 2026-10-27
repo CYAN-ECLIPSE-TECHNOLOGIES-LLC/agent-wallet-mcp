@@ -19,11 +19,14 @@ import json
 import os
 import subprocess
 import sys
+import uuid
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 import desk_envelope
 import desk_keys
+from amounts import parse_amount
+from ledger_v2 import SANDBOX_ASSET_ID, SANDBOX_CHAIN_ID
 
 HERE = Path(__file__).parent
 VAULT = Path(os.environ.get("AGENT_WALLET_DESK_VAULT",
@@ -109,13 +112,20 @@ def cmd_pay(a):
     try:
         w = mcp.tool("get_wallet", {"wallet_id": a.wallet})
         nonce = int(w.get("spend_nonce", 0)) + 1
-        amount_micro = int(round(float(a.amount) * 1_000_000))
+        # Integer base units via the core parser - no float (the v1
+        # client-side float conversion is retired with the server's).
+        amount_base = parse_amount(a.amount, 6)
+        idem = "desk_" + uuid.uuid4().hex[:16]
         signer = desk_keys.load_desk_signer(VAULT, MASTER, a.desk)
-        sig = signer.sign_spend(wallet_id=a.wallet, to=a.to,
-                                amount_micro=amount_micro, memo=a.memo, nonce=nonce)
+        sig = signer.sign_spend_v2(
+            wallet_id=a.wallet, asset_id=SANDBOX_ASSET_ID,
+            chain_id=SANDBOX_CHAIN_ID, to=a.to, amount_base=amount_base,
+            memo=a.memo, nonce=nonce, idempotency_key=idem)
         out = mcp.tool("pay", {"wallet_id": a.wallet, "to": a.to,
                                "amount_usdc": a.amount, "memo": a.memo,
-                               "authorization": {"nonce": nonce, "signature": sig}})
+                               "authorization": {"nonce": nonce,
+                                                 "signature": sig,
+                                                 "idempotency_key": idem}})
         out["nonce_presented"] = nonce
         print(json.dumps(out, indent=1))
     finally:

@@ -3,7 +3,7 @@
   "name": "io.github.CYAN-ECLIPSE-TECHNOLOGIES-LLC/agent-wallet",
   "title": "Eclipse Agent Wallet MCP",
   "description": "Policy-scoped agent wallet: caps, recipient allowlist, human approvals, kill switch, audit trail.",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "websiteUrl": "https://cetech.ai",
   "icons": [
     {
