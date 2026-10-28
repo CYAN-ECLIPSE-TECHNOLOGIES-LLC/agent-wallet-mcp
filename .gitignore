@@ -15,3 +15,5 @@ id_ecdsa*
 ledger.json
 *.log
 team-ledger.json
+dist/
+__pycache__/

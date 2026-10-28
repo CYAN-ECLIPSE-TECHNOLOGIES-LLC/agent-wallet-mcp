@@ -1,0 +1,45 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "eclipse-agent-wallet"
+version = "0.2.0"
+description = "Policy-scoped agent wallet: caps, recipient allowlist, human approvals, kill switch, audit trail."
+readme = "PYPI_README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [
+    { name = "Cyan Eclipse Technologies LLC" },
+]
+keywords = ["mcp", "model-context-protocol", "agent-wallet", "payments", "policy", "sandbox"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Topic :: Software Development :: Libraries",
+]
+
+[project.urls]
+Homepage = "https://cetech.ai"
+Repository = "https://github.com/CYAN-ECLIPSE-TECHNOLOGIES-LLC/agent-wallet-mcp"
+Vendor = "https://cetech.ai"
+
+[project.scripts]
+eclipse-agent-wallet = "server:main"
+
+# Version lockstep: this version, the VERSION file, server.json, and the
+# server.py docstring all read 0.2.0 — bump them together.
+# Flat layout: the runtime is the top-level server.py module. Runtime
+# data read beside server.py (Path(__file__).parent / ...) is
+# force-included at the same relative path in the wheel.
+[tool.hatch.build.targets.wheel.force-include]
+"server.py" = "server.py"
+"desk_verify.py" = "desk_verify.py"
+"bazaar-manifest.json" = "bazaar-manifest.json"
+
+[tool.hatch.build.targets.sdist.force-include]
+"server.py" = "server.py"
+"desk_verify.py" = "desk_verify.py"
+"bazaar-manifest.json" = "bazaar-manifest.json"
