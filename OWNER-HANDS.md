@@ -1,4 +1,4 @@
-# OWNER-HANDS — eclipse-agent-wallet PyPI launch
+# OWNER-HANDS — cyan-eclipse-agent-wallet PyPI launch (renamed from eclipse-agent-wallet, 2026-10-28)
 
 Everything in this file is done **by the owner, in the owner's
 browser**. The package is built and locally proven (wheel + sdist,
@@ -9,14 +9,14 @@ project yet.
 > **Stop rule:** no step below creates or hands over an API token.
 > Publishing runs on Trusted Publishing (OIDC) only.
 
-## Trusted Publisher for `eclipse-agent-wallet` (pending publisher)
+## Trusted Publisher for `cyan-eclipse-agent-wallet` (pending publisher)
 
 On <https://pypi.org/manage/account/publishing/> → "Add a new pending
 publisher" → **GitHub** tab. Enter these strings **exactly**:
 
 | Field | Value |
 |---|---|
-| PyPI Project Name | `eclipse-agent-wallet` |
+| PyPI Project Name | `cyan-eclipse-agent-wallet` |
 | GitHub Repository Owner | `CYAN-ECLIPSE-TECHNOLOGIES-LLC` |
 | GitHub Repository Name | `agent-wallet-mcp` |
 | GitHub Workflow Name | `publish-pypi.yml` |

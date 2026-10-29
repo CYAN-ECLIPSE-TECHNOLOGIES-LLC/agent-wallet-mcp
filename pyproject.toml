@@ -3,7 +3,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "eclipse-agent-wallet"
+name = "cyan-eclipse-agent-wallet"
 version = "0.2.0"
 description = "Policy-scoped agent wallet: caps, recipient allowlist, human approvals, kill switch, audit trail."
 readme = "PYPI_README.md"

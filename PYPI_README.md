@@ -1,4 +1,4 @@
-# eclipse-agent-wallet
+# cyan-eclipse-agent-wallet
 
 mcp-name: io.github.CYAN-ECLIPSE-TECHNOLOGIES-LLC/agent-wallet
 
@@ -24,14 +24,14 @@ log.
 ## Run it
 
 ```console
-$ pip install eclipse-agent-wallet
+$ pip install cyan-eclipse-agent-wallet
 $ eclipse-agent-wallet           # MCP over stdio, Python stdlib only
 ```
 
 MCP client config:
 
 ```json
-{ "mcpServers": { "eclipse-agent-wallet": { "command": "uvx", "args": ["eclipse-agent-wallet"] } } }
+{ "mcpServers": { "cyan-eclipse-agent-wallet": { "command": "uvx", "args": ["--from", "cyan-eclipse-agent-wallet", "eclipse-agent-wallet"] } } }
 ```
 
 ## Tools (10)

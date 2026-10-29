@@ -21,7 +21,7 @@
  "packages": [
   {
    "registryType": "pypi",
-   "identifier": "eclipse-agent-wallet",
+   "identifier": "cyan-eclipse-agent-wallet",
    "version": "0.2.0",
    "runtimeHint": "uvx",
    "transport": {
