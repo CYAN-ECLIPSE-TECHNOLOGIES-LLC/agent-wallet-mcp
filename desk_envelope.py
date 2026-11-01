@@ -1,13 +1,12 @@
-"""Envelope-encryption primitives (INTERNAL) — desk-key domain.
+"""Envelope-encryption primitives — desk-key domain.
 
-Copied pattern-for-pattern from Eclipse Anchor's anchor/_envelope.py
-(the house custody pattern): a master key (32 random bytes, file mode
-0600, OUTSIDE the repo) wraps a per-key random DEK with AES-256-GCM;
-the DEK encrypts the key material with AES-256-GCM. This module is the
-only place raw desk key bytes are decrypted, and it is private: the
-signer class in desk_keys.py calls it internally and exposes a
-sign-only API. No function here returns key material to callers of the
-signer.
+Standard envelope encryption: a master key (32 random bytes, file mode
+0600, kept outside this repository) wraps a per-key random data
+encryption key (DEK) with AES-256-GCM; the DEK encrypts the key
+material, also with AES-256-GCM. This module is the only place raw desk
+key bytes are decrypted: the signer class in desk_keys.py calls it
+internally and exposes a sign-only API. No function here returns key
+material to callers of the signer.
 """
 import base64
 import json
@@ -58,7 +57,7 @@ def create_envelope(master_key_path, plaintext: bytes, meta: dict) -> dict:
     ciphertext = dk.encrypt(data_nonce, plaintext, None)
     env = {
         "version": "envelope/1",
-        "scheme": "AES-256-GCM; DEK wrapped by master key (AES-256-GCM)",
+        "scheme": "AES-256-GCM envelope (wrapped DEK)",
         "dek_nonce": _b64(dek_nonce),
         "wrapped_dek": _b64(wrapped_dek),
         "data_nonce": _b64(data_nonce),

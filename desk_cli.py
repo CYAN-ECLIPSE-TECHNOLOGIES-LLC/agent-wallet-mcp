@@ -8,7 +8,7 @@ master key 0600, outside any repo). The server never sees key material;
 this console signs spend authorizations with the desk key (sign-only)
 and passes {nonce, signature} to the pay tool.
 
-Run with the Anchor venv python (needs eth_account + cryptography):
+Run with the project venv python (needs eth_account + cryptography):
   ~/workspace/tools/venv-anchor/bin/python desk_cli.py <command> ...
 
 Ledger selection passes through $AGENT_WALLET_LEDGER to the server.

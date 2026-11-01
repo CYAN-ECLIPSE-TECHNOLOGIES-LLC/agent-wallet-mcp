@@ -1,7 +1,6 @@
 """Desk-domain signer (per-desk secp256k1 spend-authorization keys).
 
-Domain rules (mirroring Eclipse Anchor's fund signer, adapted to the
-desk domain):
+Domain rules:
 - One key per desk; the desk id — and, once issued, the wallet id — are
   bound into the envelope and checked before any signature.
 - Sign-only API: `sign_spend` returns a signature hex. There is NO
@@ -85,8 +84,8 @@ def create_desk_key(secrets_dir, master_key_path, desk_id: str, purpose: str) ->
 
 
 def bind_wallet(secrets_dir, desk_id: str, wallet_id: str) -> None:
-    """Record the issued wallet id in the desk envelope's (plaintext,
-    Anchor-style) metadata so the signer can enforce its binding.
+    """Record the issued wallet id in the desk envelope's (plaintext)
+    metadata so the signer can enforce its binding.
     Ciphertext/key material are not touched."""
     path = Path(secrets_dir).expanduser() / f"desk-key-{desk_id}.json"
     env = desk_envelope.read_envelope(path)

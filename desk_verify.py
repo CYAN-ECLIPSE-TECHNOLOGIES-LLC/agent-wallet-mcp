@@ -1,8 +1,8 @@
 """Desk spend-authorization verification (stdlib only).
 
 Shared by server.py (verifies) and the desk signer (builds the same
-canonical message to sign). Desk keys are secp256k1 (the house fund
-domain, per Eclipse Anchor): a desk wallet address is a real EVM
+canonical message to sign). Desk keys are secp256k1: a desk wallet
+address is a real EVM
 address derived from the desk public key by Keccak-256, so it is
 mint-native on any EVM chain. Signatures are EIP-191 personal-sign
 over the canonical spend message; verification here is pure-Python
