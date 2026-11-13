@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-# Eclipse Agent Wallet MCP
+# Cyan Eclipse Agent Wallet MCP
 # Copyright © 2026 Cyan Eclipse Technologies LLC · cetech.ai
 
-"""Eclipse Agent Wallet MCP — v0 reference implementation.
+"""Cyan Eclipse Agent Wallet MCP — v0 reference implementation.
 
 Powered by Cyan Eclipse Technologies (cetech.ai).
 

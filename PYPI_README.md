@@ -2,7 +2,7 @@
 
 mcp-name: io.github.CYAN-ECLIPSE-TECHNOLOGIES-LLC/agent-wallet
 
-**What this is:** the MCP server for **Eclipse Agent Wallet** — an
+**What this is:** the MCP server for **Cyan Eclipse Agent Wallet** — an
 MCP server that gives SI agents a wallet they can only spend inside
 a human-granted written policy: per-transaction and daily caps,
 recipient allowlists, approval thresholds, expiry, and an instant,
