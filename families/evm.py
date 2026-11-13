@@ -230,7 +230,8 @@ class EvmAdapter(FamilyAdapter):
                  gas_price_base: int = 1, quote_ttl_s: int = 30,
                  chain_backed: bool = False, rpc_url: str | None = None,
                  rpc_client: JsonRpcClient | None = None,
-                 fund_signer=None, from_address: str | None = None):
+                 fund_signer=None, from_address: str | None = None,
+                 licence_gate=None):
         self.registry = registry
         self.chain_id = chain_id
         self.ledger = ledger if ledger is not None else SandboxLedger()
@@ -244,6 +245,11 @@ class EvmAdapter(FamilyAdapter):
         self._healthy = True
         # ---- B1 chain-backed TESTNET mode -------------------------------
         self.chain_backed = bool(chain_backed)
+        # Licence gate for the paid boundary (chain-backed dispatch).
+        # None = no gate attached (sandbox + pre-product operator
+        # posture); an attached gate is consulted at submit, before
+        # any broadcast, and its typed refusal propagates.
+        self.licence_gate = licence_gate
         self.fund_signer = fund_signer
         self.from_address = from_address or \
             (fund_signer.address if fund_signer is not None else None)
@@ -472,6 +478,10 @@ class EvmAdapter(FamilyAdapter):
         if artifact["chain_id"] != self.chain_id:
             raise AdapterError("ARTIFACT_INVALID",
                                "artifact chain does not match adapter chain")
+        if self.licence_gate is not None:
+            # Paid boundary: chain-backed dispatch. A typed
+            # LicenceRefusal propagates; no RPC call has been made.
+            self.licence_gate.require()
         tx_hash = self._call("eth_sendRawTransaction", [artifact["raw_tx"]])
         if tx_hash.lower() != str(artifact["tx_hash"]).lower():
             raise AdapterError("CHAIN_UNHEALTHY",

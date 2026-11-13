@@ -86,12 +86,21 @@ def build_testnet_oracle(registry=None, clock=None, **kw):
 
 
 def build_testnet_adapter(registry=None, *, rpc_url=None, rpc_client=None,
-                          fund_signer=None, clock=None):
+                          fund_signer=None, clock=None, licence_gate="env"):
     """Chain-backed EVM adapter for eip155:84532 only. RPC endpoint
     from the rpc_url argument or the AGENT_WALLET_BASE_SEPOLIA_RPC env
-    var - never hard-coded."""
+    var - never hard-coded.
+
+    licence_gate: "env" (default) attaches the licence gate when the
+    AGENT_WALLET_LICENCE_STATE env var names a licence state file and
+    leaves the adapter ungated otherwise; an explicit gate object is
+    attached as given; None never attaches one."""
     from families.evm import EvmAdapter
+    if licence_gate == "env":
+        from licence_gate import LicenceGate
+        licence_gate = LicenceGate.from_env()
     registry = registry or load_testnet_registry()
     return EvmAdapter(registry, TESTNET_CHAIN_ID, clock=clock,
                       chain_backed=True, rpc_url=rpc_url,
-                      rpc_client=rpc_client, fund_signer=fund_signer)
+                      rpc_client=rpc_client, fund_signer=fund_signer,
+                      licence_gate=licence_gate)
