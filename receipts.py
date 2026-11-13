@@ -1,3 +1,5 @@
+# Copyright (c) 2026 Cyan Eclipse Technologies LLC
+# SPDX-License-Identifier: MIT
 """Receipt v2 for Agent Wallet B0 (LOCAL/SANDBOX ONLY).
 
 A receipt binds: asset_id, chain_id, amount_base_units (int), fee,
@@ -50,7 +52,8 @@ def verify_receipt_hash(receipt: dict) -> bool:
 
 def build_receipt(*, payment_id: str, intent_id: str, wallet_id: str,
                   asset_row: dict, amount_base: int, fee_quote=None,
-                  verdict=None, policy=None, tx_ref: str | None = None,
+                  fee_actual=None, verdict=None, policy=None,
+                  tx_ref: str | None = None,
                   finality_state: str = "QUEUED",
                   refusal_code=None, desk_auth_nonce: int | None = None,
                   provisional: bool = True, created_at: int | None = None,
@@ -65,6 +68,27 @@ def build_receipt(*, payment_id: str, intent_id: str, wallet_id: str,
                "fee_asset_id": fee_quote.fee_asset_id,
                "quoted_at": fee_quote.quoted_at,
                "expires_at": fee_quote.expires_at}
+    if fee_actual is not None:
+        # F-T3: the ACTUAL fee debited on chain, next to the quote.
+        # fee.amount_base stays the QUOTED total (its historical
+        # meaning); the actuals ride as their own fields - total, L2
+        # component, L1 data-fee component - so a receipt never again
+        # presents a quote as the fee. Sandbox receipts (no chain, no
+        # actual) are byte-identical to before: these keys exist only
+        # when an actual fee was read.
+        if not isinstance(fee_actual, dict) \
+                or isinstance(fee_actual.get("amount_base"), bool) \
+                or not isinstance(fee_actual.get("amount_base"), int) \
+                or fee_actual["amount_base"] < 0:
+            raise ValueError("fee_actual.amount_base must be a "
+                             "non-negative int of base units")
+        if fee is None:
+            fee = {"amount_base": None, "fee_asset_id": None,
+                   "quoted_at": None, "expires_at": None}
+        fee["quoted_amount_base"] = fee["amount_base"]
+        fee["actual_amount_base"] = fee_actual["amount_base"]
+        fee["actual_l2_amount_base"] = fee_actual.get("l2_amount_base")
+        fee["actual_l1_fee_base"] = fee_actual.get("l1_fee_base")
     receipt = {
         "receipt_version": 2,
         "scope": "LOCAL/SANDBOX",

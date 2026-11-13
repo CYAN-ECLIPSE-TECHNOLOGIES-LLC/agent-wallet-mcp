@@ -1,3 +1,5 @@
+# Copyright (c) 2026 Cyan Eclipse Technologies LLC
+# SPDX-License-Identifier: MIT
 """Fund signer for the B1 testnet cell (NEW key domain, silas-view S3.1).
 
 Separate from the desk-authorization domain in every way that matters:
@@ -21,7 +23,9 @@ server/dispatcher asks:
   and must carry value == authorized amount;
 - the amount encoded in the artifact must equal the amount in the
   v2-authorized intent;
-- fee (gas x maxFeePerGas) must be <= the fee quote cap presented;
+- the ESTIMATED TOTAL fee (gas x maxFeePerGas + the artifact's L1
+  data-fee estimate, F-T3) must be <= the fee quote cap presented; an
+  artifact without an L1 estimate is refused (fail-closed);
 - the artifact's asset must be inside the envelope's asset_scope.
 
 This build is TESTNET-ONLY: envelope creation and signer construction
@@ -185,11 +189,24 @@ class FundSigner:
             raise FundSignerError("FEE_OVER_CAP",
                                   "a fee quote cap (int) must be presented")
         fee_max = artifact["gas"] * artifact["max_fee_per_gas"]
-        if fee_max > fee_quote_max_base:
+        # F-T3: the cap binds the ESTIMATED TOTAL fee - the L2 max
+        # above PLUS the artifact's L1 data-fee estimate (bound by the
+        # adapter at finalize time). An artifact with no L1 estimate
+        # cannot be bounded, so it is refused: fail-closed.
+        l1_estimate = artifact.get("l1_fee_estimate_base")
+        if isinstance(l1_estimate, bool) or \
+                not isinstance(l1_estimate, int) or l1_estimate < 0:
             raise FundSignerError(
                 "FEE_OVER_CAP",
-                f"fee {fee_max} wei exceeds quote cap "
-                f"{fee_quote_max_base} wei")
+                "artifact carries no L1 fee estimate; the total fee "
+                "cannot be bounded - refusing (fail-closed)")
+        fee_estimate_total = fee_max + l1_estimate
+        if fee_estimate_total > fee_quote_max_base:
+            raise FundSignerError(
+                "FEE_OVER_CAP",
+                f"estimated total fee {fee_estimate_total} wei "
+                f"(L2 max {fee_max} + L1 estimate {l1_estimate}) "
+                f"exceeds quote cap {fee_quote_max_base} wei")
         # 5. sign (key transient in memory only)
         tx = {"type": 2, "chainId": int(self.chain_id.split(":")[1]),
               "nonce": artifact["nonce"], "gas": artifact["gas"],
@@ -215,7 +232,8 @@ class FundSigner:
         return {**artifact, "signed": True,
                 "raw_tx": "0x" + raw,
                 "tx_hash": "0x" + signed.hash.hex(),
-                "from": self.address, "fee_max_base": fee_max}
+                "from": self.address, "fee_max_base": fee_max,
+                "fee_estimate_total_base": fee_estimate_total}
 
 
 def create_fund_key(secrets_dir, master_key_path, *, chain_id: str,

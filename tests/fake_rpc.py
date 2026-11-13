@@ -1,3 +1,5 @@
+# Copyright (c) 2026 Cyan Eclipse Technologies LLC
+# SPDX-License-Identifier: MIT
 """Fake JSON-RPC transport for Base Sepolia: deterministic chain state
 for adapter/signer/dispatcher tests. No network, no real keys beyond
 throwaway test accounts."""
@@ -6,15 +8,20 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from families.evm import keccak256  # noqa: E402
+from families.evm import GAS_PRICE_ORACLE_ADDRESS, keccak256  # noqa: E402
 
 BALANCE_OF = "0x70a08231"
 
 
 class FakeRpc:
-    def __init__(self, gas_price=1_000_000, block=100):
+    def __init__(self, gas_price=1_000_000, block=100, l1_fee=100_000_000_000,
+                 receipt_l1_fee=900_000_000_000):
         self.gas_price = gas_price
         self.block = block
+        # F-T3 chain model: the GasPriceOracle's getL1Fee answer for
+        # estimates, and the l1Fee a mined receipt reports as actual.
+        self.l1_fee = l1_fee
+        self.receipt_l1_fee = receipt_l1_fee
         self.eth_balances = {}
         self.token_balances = {}
         self.nonces = {}
@@ -38,6 +45,8 @@ class FakeRpc:
             return {"result": hex(self.eth_balances.get(params[0].lower(), 0))}
         if method == "eth_call":
             call = params[0]
+            if call.get("to") == GAS_PRICE_ORACLE_ADDRESS:
+                return {"result": hex(self.l1_fee)}
             if call["data"].startswith(BALANCE_OF):
                 addr = "0x" + call["data"][34:74]
                 return {"result": hex(self.token_balances.get(addr.lower(), 0))}
@@ -56,6 +65,7 @@ class FakeRpc:
                                 "blockNumber": hex(blk),
                                 "gasUsed": hex(50000),
                                 "effectiveGasPrice": hex(self.gas_price),
+                                "l1Fee": hex(self.receipt_l1_fee),
                                 "transactionHash": params[0]}}
         if method == "eth_getTransactionByHash":
             return {"result": {"hash": params[0]}

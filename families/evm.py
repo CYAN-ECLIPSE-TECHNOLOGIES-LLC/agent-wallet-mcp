@@ -1,3 +1,5 @@
+# Copyright (c) 2026 Cyan Eclipse Technologies LLC
+# SPDX-License-Identifier: MIT
 """EvmAdapter: B0 sandbox-ledger mode + B1 chain-backed TESTNET mode.
 
 B0 mode (default): no RPC, no network, no signing; EIP-55 validation
@@ -168,6 +170,57 @@ def is_valid_evm_address(address) -> bool:
 
 _TRANSFER_SELECTOR = "a9059cbb"  # ERC-20 transfer(address,uint256)
 
+# OP-Stack GasPriceOracle predeploy: getL1Fee(bytes) prices the L1 data
+# fee of a serialized transaction. F-T3: the fee quote on this chain
+# class must include that component - a quote without it understated
+# the true debit by up to ~3.1x on the bench's live samples.
+GAS_PRICE_ORACLE_ADDRESS = "0x420000000000000000000000000000000000000F"
+_GET_L1_FEE_SELECTOR = keccak256(b"getL1Fee(bytes)")[:4]
+
+
+def _rlp_encode(item) -> bytes:
+    """Minimal RLP encoding (ints, bytes, lists) - enough to serialize
+    a representative EIP-1559 payload for L1-fee estimation."""
+    if isinstance(item, int):
+        if item == 0:
+            return _rlp_encode(b"")
+        return _rlp_encode(item.to_bytes((item.bit_length() + 7) // 8,
+                                         "big"))
+    if isinstance(item, (bytes, bytearray)):
+        raw = bytes(item)
+        if len(raw) == 1 and raw[0] < 0x80:
+            return raw
+        if len(raw) <= 55:
+            return bytes([0x80 + len(raw)]) + raw
+        len_bytes = len(raw).to_bytes((len(raw).bit_length() + 7) // 8,
+                                      "big")
+        return bytes([0xB7 + len(len_bytes)]) + len_bytes + raw
+    if isinstance(item, (list, tuple)):
+        payload = b"".join(_rlp_encode(x) for x in item)
+        if len(payload) <= 55:
+            return bytes([0xC0 + len(payload)]) + payload
+        len_bytes = len(payload).to_bytes(
+            (len(payload).bit_length() + 7) // 8, "big")
+        return bytes([0xF7 + len(len_bytes)]) + len_bytes + payload
+    raise TypeError(f"cannot RLP-encode {type(item).__name__}")
+
+
+def _serialize_tx_for_l1_estimate(*, chain_id_num: int, nonce: int,
+                                  max_priority_fee_per_gas: int,
+                                  max_fee_per_gas: int, gas: int,
+                                  to: str, value: int,
+                                  data: bytes) -> bytes:
+    """Length-faithful serialization of a type-2 transaction for the
+    GasPriceOracle. The signature slots carry fixed 32-byte stand-ins:
+    getL1Fee prices byte length + zero/non-zero mix, so the estimate is
+    faithful (and, using non-zero stand-ins, marginally conservative).
+    This serialization is ONLY an estimation input - it is never
+    signed or broadcast."""
+    fields = [chain_id_num, nonce, max_priority_fee_per_gas,
+              max_fee_per_gas, gas, bytes.fromhex(to[2:]), value,
+              bytes(data), [], 0, b"\x11" * 32, b"\x11" * 32]
+    return b"\x02" + _rlp_encode(fields)
+
 
 class EvmAdapter(FamilyAdapter):
     family_id = "evm"
@@ -277,8 +330,88 @@ class EvmAdapter(FamilyAdapter):
         return int(self._call("eth_getTransactionCount",
                               [address, "pending"]), 16)
 
+    def chain_nonce_latest(self, address: str) -> int:
+        """Next usable nonce counting MINED transactions only - the
+        F-T2 reconciliation read: if this has not advanced past a
+        submission's nonce, that submission provably did not land."""
+        return int(self._call("eth_getTransactionCount",
+                              [address, "latest"]), 16)
+
+    def get_transaction(self, tx_hash: str) -> dict | None:
+        """eth_getTransactionByHash - None when the chain has never
+        seen this hash (F-T2 reconciliation read)."""
+        if not self.chain_backed:
+            raise AdapterNotImplemented("EvmAdapter.get_transaction "
+                                        "(B0 mode)")
+        return self._call("eth_getTransactionByHash", [tx_hash])
+
     def gas_price(self) -> int:
         return int(self._call("eth_gasPrice", []), 16)
+
+    def estimate_l1_fee(self, *, nonce: int,
+                        max_priority_fee_per_gas: int,
+                        max_fee_per_gas: int, gas: int, to: str,
+                        value: int, data: bytes) -> int:
+        """L1 data-fee estimate from the OP-Stack GasPriceOracle for a
+        transaction with these fields. FAIL-CLOSED (F-T3): any failure
+        to obtain the estimate raises FEE_ESTIMATE_UNAVAILABLE - a fee
+        quote on this chain class is never issued without its L1
+        component, because an L2-only number is a known understatement.
+        """
+        payload = _serialize_tx_for_l1_estimate(
+            chain_id_num=int(self.chain_id.split(":")[1]), nonce=nonce,
+            max_priority_fee_per_gas=max_priority_fee_per_gas,
+            max_fee_per_gas=max_fee_per_gas, gas=gas, to=to,
+            value=value, data=data)
+        pad = (32 - len(payload) % 32) % 32
+        call_data = (_GET_L1_FEE_SELECTOR
+                     + (32).to_bytes(32, "big")
+                     + len(payload).to_bytes(32, "big")
+                     + payload + b"\x00" * pad)
+        try:
+            result = self._call(
+                "eth_call",
+                [{"to": GAS_PRICE_ORACLE_ADDRESS,
+                  "data": "0x" + call_data.hex()}, "latest"])
+            if not isinstance(result, str) or not result.startswith("0x") \
+                    or len(result) <= 2:
+                raise ValueError(f"malformed getL1Fee result: {result!r}")
+            return int(result, 16)
+        except AdapterError as e:
+            if e.code == "FEE_ESTIMATE_UNAVAILABLE":
+                raise
+            raise AdapterError(
+                "FEE_ESTIMATE_UNAVAILABLE",
+                f"L1 fee estimate unavailable ({e}); refusing to quote "
+                "an L2-only fee on an OP-Stack chain") from e
+        except Exception as e:
+            raise AdapterError(
+                "FEE_ESTIMATE_UNAVAILABLE",
+                f"L1 fee estimate unavailable: {e}; refusing to quote "
+                "an L2-only fee on an OP-Stack chain") from e
+
+    def actual_fee(self, tx_ref: str) -> dict | None:
+        """The fee ACTUALLY debited for a mined tx, to the wei (F-T3):
+        L2 = gasUsed x effectiveGasPrice, plus the OP-Stack l1Fee the
+        chain reports on the receipt. None while the tx is unmined or
+        the receipt is unreadable - callers record actuals only when
+        this returns a value."""
+        receipt = self.get_receipt(tx_ref)
+        if receipt is None:
+            return None
+
+        def _num(v):
+            return int(v, 16) if isinstance(v, str) else int(v)
+
+        try:
+            l2 = _num(receipt["gasUsed"]) * \
+                _num(receipt["effectiveGasPrice"])
+            l1_raw = receipt.get("l1Fee")
+            l1 = _num(l1_raw) if l1_raw is not None else 0
+        except (KeyError, TypeError, ValueError):
+            return None
+        return {"amount_base": l2 + l1, "l2_amount_base": l2,
+                "l1_fee_base": l1}
 
     def finalize_unsigned(self, artifact: dict) -> dict:
         """Fill chain fields (nonce, gas, EIP-1559 fees) on an unsigned
@@ -298,6 +431,20 @@ class EvmAdapter(FamilyAdapter):
         out["max_priority_fee_per_gas"] = price
         out["max_fee_per_gas"] = price * 2
         out["fee_cap_base"] = gas_units * out["max_fee_per_gas"]
+        # F-T3: bind the L1 data-fee estimate for THIS exact artifact
+        # into the artifact, so the fund signer can bound the
+        # ESTIMATED TOTAL fee (L2 max + L1 estimate) before signing.
+        # Estimation failure is fail-closed (FEE_ESTIMATE_UNAVAILABLE).
+        data = out.get("data") or "0x"
+        out["l1_fee_estimate_base"] = self.estimate_l1_fee(
+            nonce=out["nonce"],
+            max_priority_fee_per_gas=out["max_priority_fee_per_gas"],
+            max_fee_per_gas=out["max_fee_per_gas"], gas=gas_units,
+            to=out["to"], value=out.get("value_base") or 0,
+            data=bytes.fromhex(data[2:]) if data.startswith("0x")
+            and len(data) > 2 else b"")
+        out["fee_estimate_total_base"] = (
+            out["fee_cap_base"] + out["l1_fee_estimate_base"])
         return out
 
     def sign(self, artifact: dict, *, authorized_intent: dict,
@@ -379,12 +526,38 @@ class EvmAdapter(FamilyAdapter):
         gas_units = 65000 if row["transfer_method"] == "erc20" else 21000
         at = self._clock()
         if self.chain_backed:
-            # Live quote: current gas price x2 headroom (matches the
-            # EIP-1559 max fee the fund signer will be capped at).
+            # Live quote = ESTIMATED TOTAL fee (F-T3): the L2 leg
+            # (current gas price x2 headroom, matching the EIP-1559
+            # max fee the fund signer will be capped at) PLUS the L1
+            # data-fee estimate from the GasPriceOracle for a
+            # length-faithful representative transaction. The L1 leg is
+            # fail-closed: no estimate, no quote.
             price = self.gas_price()
-            return FeeQuote(amount_base=gas_units * price * 2,
+            l2_estimate = gas_units * price * 2
+            amount = intent.get("amount_base")
+            amount_ok = isinstance(amount, int) \
+                and not isinstance(amount, bool) and amount > 0
+            sender = intent.get("from_address") or self.from_address
+            nonce = self.chain_nonce(sender) if sender else 0
+            if row["transfer_method"] == "erc20":
+                data = bytes.fromhex(_TRANSFER_SELECTOR) + bytes(32) \
+                    + (amount if amount_ok else 0).to_bytes(32, "big")
+                l1_estimate = self.estimate_l1_fee(
+                    nonce=nonce, max_priority_fee_per_gas=price,
+                    max_fee_per_gas=price * 2, gas=gas_units,
+                    to=row["contract_or_mint"], value=0, data=data)
+            else:
+                l1_estimate = self.estimate_l1_fee(
+                    nonce=nonce, max_priority_fee_per_gas=price,
+                    max_fee_per_gas=price * 2, gas=gas_units,
+                    to=intent.get("to") or
+                    "0x0000000000000000000000000000000000000000",
+                    value=amount if amount_ok else 0, data=b"")
+            return FeeQuote(amount_base=l2_estimate + l1_estimate,
                             fee_asset_id=row["fee_asset_id"], quoted_at=at,
-                            expires_at=at + self.quote_ttl_s)
+                            expires_at=at + self.quote_ttl_s,
+                            l2_amount_base=l2_estimate,
+                            l1_amount_base=l1_estimate)
         return FeeQuote(amount_base=gas_units * self.gas_price_base,
                         fee_asset_id=row["fee_asset_id"], quoted_at=at,
                         expires_at=at + self.quote_ttl_s)

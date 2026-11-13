@@ -1,3 +1,5 @@
+# Copyright (c) 2026 Cyan Eclipse Technologies LLC
+# SPDX-License-Identifier: MIT
 """Policy engine v2 for Agent Wallet B0 (LOCAL/SANDBOX ONLY).
 
 Extracted from the transport so it can be benched without MCP. Per-asset
@@ -49,6 +51,8 @@ class RefusalCode(str, Enum):
     PRICE_MOVED = "PRICE_MOVED"
     DEPEG_BAND_EXCEEDED = "DEPEG_BAND_EXCEEDED"
     FEE_OVER_CAP = "FEE_OVER_CAP"
+    FEE_ESTIMATE_UNAVAILABLE = "FEE_ESTIMATE_UNAVAILABLE"
+    DUPLICATE_SUBMISSION = "DUPLICATE_SUBMISSION"
     QUOTE_EXPIRED = "QUOTE_EXPIRED"
     INVOICE_EXPIRED = "INVOICE_EXPIRED"
     APPROVAL_EXPIRED = "APPROVAL_EXPIRED"

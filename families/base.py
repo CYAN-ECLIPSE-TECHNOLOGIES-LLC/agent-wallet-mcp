@@ -1,3 +1,5 @@
+# Copyright (c) 2026 Cyan Eclipse Technologies LLC
+# SPDX-License-Identifier: MIT
 """FamilyAdapter interface (ARCHITECTURE.md S3.1) + shared value types.
 
 LOCAL/SANDBOX ONLY. Amounts are integer base units. Balance reads
@@ -77,6 +79,14 @@ class FeeQuote:
     fee_asset_id: str
     quoted_at: int
     expires_at: int
+    # F-T3: on OP-Stack chains the true fee has two components - the L2
+    # execution fee and the L1 data fee. amount_base is ALWAYS the
+    # estimated TOTAL (l2 + l1) so every cap check that binds
+    # amount_base binds the total; the components ride along for
+    # receipts/audit. None on chains/scopes with no L1 component
+    # (sandbox, B0) - there amount_base is the whole quote, as before.
+    l2_amount_base: int | None = None
+    l1_amount_base: int | None = None
 
     @property
     def ttl_s(self) -> int:
