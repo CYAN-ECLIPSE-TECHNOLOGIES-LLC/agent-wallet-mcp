@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Copyright (c) 2026 Cyan Eclipse Technologies LLC
+# SPDX-License-Identifier: MIT
 """Desk operator console for Eclipse Agent Wallet MCP (v0.2.0 desk extension).
 
 Drives server.py over its real MCP stdio transport. Holds the desk

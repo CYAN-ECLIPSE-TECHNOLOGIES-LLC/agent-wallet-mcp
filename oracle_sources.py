@@ -1,3 +1,5 @@
+# Copyright (c) 2026 Cyan Eclipse Technologies LLC
+# SPDX-License-Identifier: MIT
 """Real price sources for the B1 testnet cell (oracle.py's
 TwoSourceOracle inputs).
 

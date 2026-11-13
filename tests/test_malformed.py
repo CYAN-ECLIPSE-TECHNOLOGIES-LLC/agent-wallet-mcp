@@ -1,3 +1,5 @@
+# Copyright (c) 2026 Cyan Eclipse Technologies LLC
+# SPDX-License-Identifier: MIT
 """Malformed-args battery: every public B0 function must fail typed and
 closed on wrong types, missing fields, unknown asset/chain, malformed
 addresses, and cap overflow - never crash with an untyped error and

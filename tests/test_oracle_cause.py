@@ -1,3 +1,5 @@
+# Copyright (c) 2026 Cyan Eclipse Technologies LLC
+# SPDX-License-Identifier: MIT
 """F-2 (B1 testnet bench finding): the policy layer must preserve the
 oracle failure CAUSE — ORACLE_DIVERGENCE vs PRICE_STALE vs
 ORACLE_UNAVAILABLE — on the verdict and through to the receipt,

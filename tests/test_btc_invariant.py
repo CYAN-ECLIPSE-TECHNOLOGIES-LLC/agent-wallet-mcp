@@ -1,3 +1,5 @@
+# Copyright (c) 2026 Cyan Eclipse Technologies LLC
+# SPDX-License-Identifier: MIT
 """Invariant R/P-1: BTC is reserve-only. No bitcoin family module exists,
 no BTC buildPayment path exists, grant-time and pay-time are typed
 ASSET_RESERVE_ONLY, and a reserve address can never be a recipient."""

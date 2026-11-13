@@ -1,3 +1,5 @@
+# Copyright (c) 2026 Cyan Eclipse Technologies LLC
+# SPDX-License-Identifier: MIT
 """Existing-surface smoke: the untouched v1 server.py (10 tools) must
 still handshakes + run its sandbox flow against a TEMP ledger. This is
 the 'existing suite green' check for B0: HEAD ships no test files, its CI

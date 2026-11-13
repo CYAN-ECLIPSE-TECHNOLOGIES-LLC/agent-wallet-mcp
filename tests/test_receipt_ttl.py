@@ -1,3 +1,5 @@
+# Copyright (c) 2026 Cyan Eclipse Technologies LLC
+# SPDX-License-Identifier: MIT
 """C-3 evidence: (D-3) exactly one receipt per state transition, and
 (D-4) PaymentIntent TTL - an intent past its TTL is refused
 APPROVAL_EXPIRED at authorize and at dispatch, moved to EXPIRED, and

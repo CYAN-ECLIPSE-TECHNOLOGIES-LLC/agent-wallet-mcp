@@ -1,3 +1,5 @@
+# Copyright (c) 2026 Cyan Eclipse Technologies LLC
+# SPDX-License-Identifier: MIT
 import unittest
 
 from families.base import AdapterNotImplemented, SandboxLedger

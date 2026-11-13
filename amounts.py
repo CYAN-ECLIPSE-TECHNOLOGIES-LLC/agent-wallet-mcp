@@ -1,3 +1,5 @@
+# Copyright (c) 2026 Cyan Eclipse Technologies LLC
+# SPDX-License-Identifier: MIT
 """Integer base-unit amounts for the Agent Wallet B0 core.
 
 LOCAL/SANDBOX ONLY. Money is integer base units everywhere. Parsing and

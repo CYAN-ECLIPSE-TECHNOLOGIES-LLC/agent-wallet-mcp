@@ -1,3 +1,5 @@
+# Copyright (c) 2026 Cyan Eclipse Technologies LLC
+# SPDX-License-Identifier: MIT
 """B1 integration battery: the v0.3.0 server over its real stdio
 transport - policy v2 + Dispatcher behind the tools, integer-only
 amounts, receipts persisted exactly once, daily caps surviving a

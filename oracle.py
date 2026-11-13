@@ -1,3 +1,5 @@
+# Copyright (c) 2026 Cyan Eclipse Technologies LLC
+# SPDX-License-Identifier: MIT
 """Price oracle plumbing for policy v2 (LOCAL/SANDBOX ONLY).
 
 Policy never values an asset from a single silent feed. An injected

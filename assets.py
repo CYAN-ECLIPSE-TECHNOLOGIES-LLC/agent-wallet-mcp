@@ -1,3 +1,5 @@
+# Copyright (c) 2026 Cyan Eclipse Technologies LLC
+# SPDX-License-Identifier: MIT
 """Asset registry for the Agent Wallet B0 core (LOCAL/SANDBOX ONLY).
 
 One row per asset x network, per silas-view.md S4.1. `slate_tier` (the

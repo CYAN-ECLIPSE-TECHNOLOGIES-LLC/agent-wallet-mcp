@@ -1,3 +1,5 @@
+# Copyright (c) 2026 Cyan Eclipse Technologies LLC
+# SPDX-License-Identifier: MIT
 """Testnet build configuration for the B1 first cell (Base Sepolia).
 
 TESTNET ONLY. This module is the ONLY place where the Base Sepolia

@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Copyright (c) 2026 Cyan Eclipse Technologies LLC
+# SPDX-License-Identifier: MIT
 """Operator tool: migrate a v1 sandbox ledger.json to schema v2.
 
 B1 integration step (c). This is an OPERATOR step, deliberately not

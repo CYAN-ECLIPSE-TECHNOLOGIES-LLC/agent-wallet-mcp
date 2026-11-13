@@ -1,3 +1,5 @@
+# Copyright (c) 2026 Cyan Eclipse Technologies LLC
+# SPDX-License-Identifier: MIT
 """C-2 / defect D-2 evidence: every adapter entry point fails TYPED
 (AdapterError with a stable code) on missing fields / non-dict input.
 The B0 defect was EvmAdapter.buildPayment({}) raising a bare KeyError;

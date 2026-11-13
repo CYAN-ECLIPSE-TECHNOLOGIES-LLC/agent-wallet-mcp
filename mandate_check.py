@@ -1,3 +1,5 @@
+# Copyright (c) 2026 Cyan Eclipse Technologies LLC
+# SPDX-License-Identifier: MIT
 """Herald mandate verification bridge (F-1 closure, B1 testnet bench).
 
 The bench found that no mandate-status check existed anywhere in this

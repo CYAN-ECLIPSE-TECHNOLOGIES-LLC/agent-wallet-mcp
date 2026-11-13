@@ -1,3 +1,5 @@
+# Copyright (c) 2026 Cyan Eclipse Technologies LLC
+# SPDX-License-Identifier: MIT
 """Ledger schema v2 codec + anchor-checked store (LOCAL/SANDBOX ONLY).
 
 ledger_v2 is a PURE codec: migrate_v1_to_v2 wraps a v1 sandbox ledger

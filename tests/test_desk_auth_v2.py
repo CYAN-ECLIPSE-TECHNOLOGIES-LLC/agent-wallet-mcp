@@ -1,3 +1,5 @@
+# Copyright (c) 2026 Cyan Eclipse Technologies LLC
+# SPDX-License-Identifier: MIT
 """Integration step (b) evidence: desk-auth v2 canonical message.
 
 The v2 message binds wallet + asset x chain + amount in base units +

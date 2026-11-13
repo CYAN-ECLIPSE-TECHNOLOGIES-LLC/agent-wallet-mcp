@@ -1,3 +1,5 @@
+# Copyright (c) 2026 Cyan Eclipse Technologies LLC
+# SPDX-License-Identifier: MIT
 """Chain-family adapters for Agent Wallet B0 (LOCAL/SANDBOX ONLY).
 
 Only two adapters exist in B0: SandboxAdapter and EvmAdapter (the latter

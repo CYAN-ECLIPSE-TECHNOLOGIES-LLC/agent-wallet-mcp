@@ -1,3 +1,5 @@
+# Copyright (c) 2026 Cyan Eclipse Technologies LLC
+# SPDX-License-Identifier: MIT
 """Envelope-encryption primitives (INTERNAL) — desk-key domain.
 
 Copied pattern-for-pattern from Eclipse Anchor's anchor/_envelope.py

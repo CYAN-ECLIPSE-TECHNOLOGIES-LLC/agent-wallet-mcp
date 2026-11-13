@@ -1,3 +1,5 @@
+# Copyright (c) 2026 Cyan Eclipse Technologies LLC
+# SPDX-License-Identifier: MIT
 """SandboxAdapter: executes against the in-memory SandboxLedger only.
 
 LOCAL/SANDBOX ONLY. This is registry row #1's adapter - the only

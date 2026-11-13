@@ -1,3 +1,5 @@
+# Copyright (c) 2026 Cyan Eclipse Technologies LLC
+# SPDX-License-Identifier: MIT
 """F-1 (B1 testnet bench finding): Herald mandate status is wired at
 dispatch. A presented mandate credential is verified with Herald
 (signature + expiry + status-list revocation + scope) BEFORE signing

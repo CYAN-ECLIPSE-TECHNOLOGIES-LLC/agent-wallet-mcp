@@ -1,3 +1,5 @@
+# Copyright (c) 2026 Cyan Eclipse Technologies LLC
+# SPDX-License-Identifier: MIT
 """Desk-domain signer (per-desk secp256k1 spend-authorization keys).
 
 Domain rules (mirroring Eclipse Anchor's fund signer, adapted to the

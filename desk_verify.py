@@ -1,3 +1,5 @@
+# Copyright (c) 2026 Cyan Eclipse Technologies LLC
+# SPDX-License-Identifier: MIT
 """Desk spend-authorization verification (stdlib only).
 
 Shared by server.py (verifies) and the desk signer (builds the same

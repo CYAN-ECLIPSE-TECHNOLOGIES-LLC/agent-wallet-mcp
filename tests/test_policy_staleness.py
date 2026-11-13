@@ -1,3 +1,5 @@
+# Copyright (c) 2026 Cyan Eclipse Technologies LLC
+# SPDX-License-Identifier: MIT
 """C-1 / defect D-1 evidence: price staleness is enforced at the
 POLICY layer, for any injected Oracle implementation - not only
 inside TwoSourceOracle. A stale snapshot degrades exactly like an

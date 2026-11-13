@@ -1,3 +1,5 @@
+# Copyright (c) 2026 Cyan Eclipse Technologies LLC
+# SPDX-License-Identifier: MIT
 """Finality watcher for chain-backed adapters (B1 testnet cell).
 
 Polls adapter.getStatus(tx_ref) and drives a PaymentIntent through
