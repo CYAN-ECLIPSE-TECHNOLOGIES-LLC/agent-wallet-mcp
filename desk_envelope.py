@@ -1,3 +1,5 @@
+# Copyright (c) 2026 Cyan Eclipse Technologies LLC
+# SPDX-License-Identifier: MIT
 """Envelope-encryption primitives — desk-key domain.
 
 Standard envelope encryption: a master key (32 random bytes, file mode
