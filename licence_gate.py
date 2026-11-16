@@ -69,11 +69,14 @@ def artefact_hash(artefact):
 
 
 def _load_activation_client(base_url):
+    # The activation client's location is deployment configuration,
+    # named by CETLIC_CLIENT_DIR. Shipped code carries no host paths:
+    # with no directory configured (or no client in it) the loader
+    # returns None and the gate reports the server unreachable.
     candidates = []
     env_dir = os.environ.get("CETLIC_CLIENT_DIR")
     if env_dir:
         candidates.append(env_dir)
-    candidates.append("/home/witness/app-family/cyan-eclipse-license-server")
     for cand in candidates:
         if os.path.isfile(os.path.join(cand, "client", "activation.py")):
             if cand not in sys.path:
