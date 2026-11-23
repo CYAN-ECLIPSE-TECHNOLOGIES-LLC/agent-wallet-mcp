@@ -627,8 +627,12 @@ def t_resolve_approval(state, args, approve: bool):
         audit(state, w["id"], "approval_denied", w["owner_id"],
               {"request_id": rid})
         return {"status": "denied", "request_id": rid}
-    audit(state, w["id"], "approval_granted", w["owner_id"],
-          {"request_id": rid})
+    # Ryan F2: the audit log is the evidence of authorization, so
+    # "approval_granted" is written ONLY once the approval has actually
+    # executed. An approval attempt the dispatch-time re-check refuses
+    # is logged as "approval_refused" with the reason — never as a
+    # grant. (At v0.2.0 the grant was logged before the frozen check,
+    # so a post-revoke refusal read as an owner grant.)
     rt = Runtime(state)
     intent = build_intent(
         w, req["to"], int(req["amount_base"]), req.get("memo", ""),
@@ -643,7 +647,14 @@ def t_resolve_approval(state, args, approve: bool):
     if res.status != "executed":
         req["status"] = "execution_refused"
         req["resolved_at"] = now()
-        return _rejected(state, w, intent, res)
+        code = res.refusal_code.value if res.refusal_code else None
+        audit(state, w["id"], "approval_refused", w["owner_id"],
+              {"request_id": rid, "reason": res.reason},
+              asset_id=SANDBOX_ASSET_ID, refusal_code=code)
+        return {"status": "rejected", "reason": res.reason,
+                "refusal_code": code}
+    audit(state, w["id"], "approval_granted", w["owner_id"],
+          {"request_id": rid})
     req["status"] = "approved"
     req["resolved_at"] = now()
     return _settle_executed(state, rt, w, intent, via_approval=rid)

@@ -96,5 +96,52 @@ class TestF1ApprovalRechecksPolicy(unittest.TestCase):
         self.assertEqual(r["status"], "executed")
 
 
+def entries_for(st, event, rid):
+    return [e for e in st["audit"] if e["event"] == event
+            and e["detail"].get("request_id") == rid]
+
+
+class TestF2RefusedApprovalLogging(unittest.TestCase):
+    """F2: a refused approval must be logged as a refusal, never as
+    "approval_granted". The audit log is the evidence of what was
+    authorized; a grant entry for an approval that did not execute
+    corrupts that evidence (Ryan's entry 14, post-revoke)."""
+
+    def test_post_revoke_approval_is_refused_in_log(self):
+        st, wid = make_wallet(BASE)
+        rid = queue(st, wid, "30.00")
+        server.t_revoke(st, {"wallet_id": wid, "reason": "test"})
+        r = approve(st, rid)
+        self.assertEqual(r["status"], "rejected")
+        self.assertEqual(entries_for(st, "approval_granted", rid), [])
+        refused = entries_for(st, "approval_refused", rid)
+        self.assertEqual(len(refused), 1)
+        self.assertTrue(refused[0]["detail"].get("reason"))
+
+    def test_policy_refusal_at_approval_is_refused_in_log(self):
+        st, wid = make_wallet(BASE)
+        rid = queue(st, wid, "30.00")
+        for _ in range(3):  # fill the daily cap after queueing
+            server.t_pay(st, {"wallet_id": wid, "to": BOB,
+                              "amount_usdc": "20.00"})
+        r = approve(st, rid)
+        self.assertEqual(r["status"], "rejected")
+        self.assertEqual(entries_for(st, "approval_granted", rid), [])
+        self.assertEqual(len(entries_for(st, "approval_refused", rid)), 1)
+
+    def test_executed_approval_logs_one_grant_before_execution(self):
+        st, wid = make_wallet(BASE)
+        rid = queue(st, wid, "30.00")
+        r = approve(st, rid)
+        self.assertEqual(r["status"], "executed")
+        granted = entries_for(st, "approval_granted", rid)
+        self.assertEqual(len(granted), 1)
+        executed = [e for e in st["audit"]
+                    if e["event"] == "payment_executed"
+                    and e["detail"].get("via_approval") == rid]
+        self.assertEqual(len(executed), 1)
+        self.assertLess(granted[0]["seq"], executed[0]["seq"])
+
+
 if __name__ == "__main__":
     unittest.main()
