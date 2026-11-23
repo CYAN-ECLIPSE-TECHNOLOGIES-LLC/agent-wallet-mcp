@@ -9,7 +9,7 @@ On **November 24, 2026**, Wells Fargo's Online Access Agreement Section 15 takes
 
 This MCP server is the opposite design: **an agent wallet where responsibility follows scope.**
 
-- The human owner grants a written **policy**: per-transaction cap, daily cap, approval threshold, recipient allowlist, expiry, purpose.
+- The human owner grants a written **policy**: per-transaction cap, daily cap, approval threshold, recipient allowlist, expiry, purpose. Expiry is a whole number of days from the moment of the grant, ending at the same time of day (`expires_in_days`, 1 or more; omit it for a policy with no expiry) — and the liability receipt states the expiry it carries.
 - The agent can spend **only inside that scope**. Outside it, payments are rejected — or routed to a **human approval queue** when they exceed only the approval threshold.
 - Every grant, payment, rejection, approval and revocation is written to an **append-only audit log** — the evidence of what was actually authorized.
 - A **kill switch** freezes the wallet instantly, with the revocation timestamped in the log. Revoking access to your bank means "notify us and wait"; here it is immediate and provable.

@@ -428,6 +428,14 @@ def t_set_policy(state, args):
     if days is not None and (isinstance(days, bool)
                              or not isinstance(days, int)):
         raise ToolError("expires_in_days must be an integer")
+    # Ryan F4: 0 must not silently mean "never expires" and a negative
+    # count must not mint an already-expired policy. No expiry is
+    # expressed by OMITTING expires_in_days, and the receipt says so.
+    if days is not None and days < 1:
+        raise ToolError(
+            "expires_in_days must be a positive whole number of days "
+            "(1 or more); omit expires_in_days to grant a policy with "
+            "no expiry")
     expires_at = (now() + days * 86400) if days else None
     allowlist = [{"family": "sandbox", "chain_id": SANDBOX_CHAIN_ID,
                   "address": str(a), "label": ""}
@@ -445,12 +453,22 @@ def t_set_policy(state, args):
     except Refusal as e:
         raise ToolError(f"policy refused ({e.code.value}): {e.reason}")
     w["policy"] = policy_to_dict(pol)
+    # Ryan F4: the liability receipt states the expiry it carries, so
+    # the owner can catch a wrong grant from the receipt alone.
+    if expires_at is not None:
+        expiry_clause = (
+            f"expires {time.strftime('%Y-%m-%d %H:%M UTC', time.gmtime(expires_at))} "
+            f"({days} day{'s' if days != 1 else ''} from the grant, "
+            f"at the same time of day)")
+    else:
+        expiry_clause = "no expiry (the policy runs until revoked)"
     receipt = (f"Liability receipt: {w['owner_id']} granted agent scope for wallet {w['id']}: "
                f"max {fmt(per_tx)} USDC per transaction, "
                f"{fmt(daily)} per day, approval required above "
                f"{fmt(approval)}, recipients "
                f"{'restricted to allowlist' if allowlist else 'unrestricted'}, "
-               f"purpose: {args.get('purpose') or 'unspecified'}. Responsibility follows this scope — "
+               f"purpose: {args.get('purpose') or 'unspecified'}, "
+               f"{expiry_clause}. Responsibility follows this scope — "
                f"nothing outside it is authorized.")
     audit(state, w["id"], "policy_granted", w["owner_id"],
           {"policy": w["policy"], "policy_hash": pol.policy_hash(),
@@ -696,7 +714,7 @@ TOOLS = {
                        "desk_id": {"type": "string"}, "desk_pubkey": {"type": "string"}}, ["owner_id"]),
     "get_wallet": (t_get_wallet, "Wallet summary: balance, frozen state, spend today, active policy.",
                    {"wallet_id": {"type": "string"}}, ["wallet_id"]),
-    "set_policy": (t_set_policy, "The owner grants the spending scope: per-transaction cap, daily cap, approval threshold, recipient allowlist, expiry, purpose. Returns a plain-language liability receipt. Responsibility follows this scope.",
+    "set_policy": (t_set_policy, "The owner grants the spending scope: per-transaction cap, daily cap, approval threshold, recipient allowlist, expiry, purpose. expires_in_days is a positive whole number of days counted from the moment of the grant, ending at the same time of day; it must be 1 or more — omit it to grant a policy with no expiry. Returns a plain-language liability receipt that states the expiry it carries. Responsibility follows this scope.",
                    {"wallet_id": {"type": "string"}, "per_tx_cap_usdc": {"type": "string"},
                     "daily_cap_usdc": {"type": "string"}, "approval_above_usdc": {"type": "string"},
                     "allowlist": {"type": "array", "items": {"type": "string"}},

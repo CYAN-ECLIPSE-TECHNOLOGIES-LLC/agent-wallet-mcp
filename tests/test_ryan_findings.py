@@ -181,5 +181,50 @@ class TestF3RevokeCancelsPending(unittest.TestCase):
                           if e["event"] == "approval_cancelled"], [])
 
 
+class TestF4ExpiryInput(unittest.TestCase):
+    """F4: expiry input is validated and the liability receipt states
+    the expiry it carries. expires_in_days=0 must not silently mean
+    "never expires"; negatives must not mint an already-expired
+    policy; no-expiry is expressed by omitting the field and the
+    receipt says which of the two the grant carries."""
+
+    def grant(self, **kw):
+        st = server.fresh_state()
+        wid = server.t_create_wallet(
+            st, {"owner_id": "owner@example.com"})["wallet_id"]
+        return st, wid, server.t_set_policy(
+            st, {"wallet_id": wid, **BASE, **kw})
+
+    def test_zero_days_rejected(self):
+        st = server.fresh_state()
+        wid = server.t_create_wallet(
+            st, {"owner_id": "owner@example.com"})["wallet_id"]
+        with self.assertRaises(server.ToolError):
+            server.t_set_policy(st, {"wallet_id": wid, **BASE,
+                                     "expires_in_days": 0})
+
+    def test_negative_days_rejected(self):
+        st = server.fresh_state()
+        wid = server.t_create_wallet(
+            st, {"owner_id": "owner@example.com"})["wallet_id"]
+        with self.assertRaises(server.ToolError):
+            server.t_set_policy(st, {"wallet_id": wid, **BASE,
+                                     "expires_in_days": -1})
+
+    def test_receipt_states_expiry_date(self):
+        _, _, out = self.grant(expires_in_days=7)
+        receipt = out["liability_receipt"]
+        self.assertIn("expires ", receipt)
+        self.assertIn("7 days from the grant", receipt)
+
+    def test_receipt_states_no_expiry(self):
+        _, _, out = self.grant()
+        self.assertIn("no expiry", out["liability_receipt"])
+
+    def test_one_day_expiry_accepted_and_in_future(self):
+        _, wid, out = self.grant(expires_in_days=1)
+        self.assertGreater(out["policy"]["expires_at"], server.now())
+
+
 if __name__ == "__main__":
     unittest.main()
