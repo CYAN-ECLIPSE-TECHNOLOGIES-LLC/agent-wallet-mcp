@@ -38,6 +38,21 @@ Since v0.3.0 the server runs on the asset-aware core (Policy v2 + Dispatcher: pe
 
 ## Run it
 
+Published on PyPI as **`cyan-eclipse-agent-wallet`**:
+
+```console
+$ pip install cyan-eclipse-agent-wallet
+$ eclipse-agent-wallet           # MCP over stdio, Python stdlib only
+```
+
+or, without installing, via `uvx`:
+
+```json
+{ "mcpServers": { "cyan-eclipse-agent-wallet": { "command": "uvx", "args": ["--from", "cyan-eclipse-agent-wallet", "eclipse-agent-wallet"] } } }
+```
+
+From this source tree:
+
 ```bash
 python3 server.py            # MCP over stdio, stdlib only, no dependencies
 ```
