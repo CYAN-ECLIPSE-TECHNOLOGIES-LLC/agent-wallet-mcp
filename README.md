@@ -16,7 +16,7 @@ This MCP server is the opposite design: **an agent wallet where responsibility f
 
 ## Status
 
-v0.3.2. **Sandbox only** — balances are simulated test USDC in a local JSON ledger. No real funds move and no network calls are made. The policy engine is the product; production payment rails (x402, partner processors) plug in behind it without changing the tool surface.
+v0.3.3. **Sandbox only** — balances are simulated test USDC in a local JSON ledger. No real funds move and no network calls are made. The policy engine is the product; production payment rails (x402, partner processors) plug in behind it without changing the tool surface.
 
 Since v0.3.0 the server runs on the asset-aware core (Policy v2 + Dispatcher: per-asset registry, integer base units, dispatch-time re-check, Herald mandate verification at dispatch). v0.3.1 adds the licence-gated chain-backed dispatch boundary. v0.3.2 closes the six findings from the November 2026 external test report: approval-refusal audit logging, revoke cancelling the pending approval queue, expiry input validation with the expiry stated on the liability receipt, and documentation cures. The Base Sepolia testnet cell remains incomplete - its funded broadcast half is unfunded, and no mandate-enforced live dispatch has ever run.
 
