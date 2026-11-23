@@ -3,7 +3,7 @@
  "name": "io.github.CYAN-ECLIPSE-TECHNOLOGIES-LLC/agent-wallet",
  "title": "Cyan Eclipse Agent Wallet MCP",
  "description": "Policy-scoped agent wallet: caps, recipient allowlist, human approvals, kill switch, audit trail.",
- "version": "0.3.1",
+ "version": "0.3.2",
  "websiteUrl": "https://cetech.ai",
  "icons": [
   {
@@ -39,7 +39,7 @@
   {
    "registryType": "pypi",
    "identifier": "cyan-eclipse-agent-wallet",
-   "version": "0.3.1",
+   "version": "0.3.2",
    "runtimeHint": "uvx",
    "transport": {
     "type": "stdio"

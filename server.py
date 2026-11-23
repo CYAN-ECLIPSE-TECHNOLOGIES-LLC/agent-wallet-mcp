@@ -752,7 +752,7 @@ def handle(req: dict):
         return {"jsonrpc": "2.0", "id": rid, "result": {
             "protocolVersion": req.get("params", {}).get("protocolVersion", "2025-03-26"),
             "capabilities": {"tools": {}},
-            "serverInfo": {"name": "eclipse-agent-wallet", "version": "0.3.1"}}}
+            "serverInfo": {"name": "eclipse-agent-wallet", "version": "0.3.2"}}}
     if method == "ping":
         return {"jsonrpc": "2.0", "id": rid, "result": {}}
     if method == "tools/list":

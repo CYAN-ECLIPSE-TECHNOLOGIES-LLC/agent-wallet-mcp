@@ -96,7 +96,7 @@ class ServerIntegrationTests(unittest.TestCase):
                                  "check_payment", "pay", "approve_payment",
                                  "deny_payment", "audit_log", "revoke"])
         info = self.srv.call("initialize", {})["result"]["serverInfo"]
-        self.assertEqual(info["version"], "0.3.1")
+        self.assertEqual(info["version"], "0.3.2")
 
     # ------------------------------------------------------ happy paths
     def test_pay_executes_and_persists_exactly_one_receipt(self):
