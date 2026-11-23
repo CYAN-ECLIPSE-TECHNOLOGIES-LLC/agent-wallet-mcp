@@ -143,5 +143,41 @@ class TestF2RefusedApprovalLogging(unittest.TestCase):
         self.assertLess(granted[0]["seq"], executed[0]["seq"])
 
 
+class TestF3RevokeCancelsPending(unittest.TestCase):
+    """F3: revoke cancels the wallet's pending approval queue and logs
+    each cancellation. Queued requests must not outlive the kill
+    switch as silent "pending" entries."""
+
+    def test_revoke_cancels_and_logs_pending(self):
+        st, wid = make_wallet({**BASE, "daily_cap_usdc": "500.00"})
+        rid1 = queue(st, wid, "30.00")
+        rid2 = queue(st, wid, "25.00")
+        out = server.t_revoke(st, {"wallet_id": wid, "reason": "test"})
+        self.assertEqual(st["pending"][rid1]["status"], "cancelled")
+        self.assertEqual(st["pending"][rid2]["status"], "cancelled")
+        self.assertEqual(sorted(out["cancelled_request_ids"]),
+                         sorted([rid1, rid2]))
+        canc = [e for e in st["audit"] if e["event"] == "approval_cancelled"]
+        self.assertEqual(len(canc), 2)
+        kill = [e for e in st["audit"]
+                if e["event"] == "kill_switch_engaged"]
+        self.assertEqual(sorted(kill[0]["detail"]["cancelled_request_ids"]),
+                         sorted([rid1, rid2]))
+
+    def test_cancelled_request_cannot_be_approved(self):
+        st, wid = make_wallet({**BASE, "daily_cap_usdc": "500.00"})
+        rid = queue(st, wid, "30.00")
+        server.t_revoke(st, {"wallet_id": wid, "reason": "test"})
+        with self.assertRaises(server.ToolError):
+            approve(st, rid)
+
+    def test_revoke_with_empty_queue_cancels_nothing(self):
+        st, wid = make_wallet(BASE)
+        out = server.t_revoke(st, {"wallet_id": wid, "reason": "test"})
+        self.assertEqual(out["cancelled_request_ids"], [])
+        self.assertEqual([e for e in st["audit"]
+                          if e["event"] == "approval_cancelled"], [])
+
+
 if __name__ == "__main__":
     unittest.main()

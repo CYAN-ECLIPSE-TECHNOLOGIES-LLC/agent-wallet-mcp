@@ -669,9 +669,24 @@ def t_audit_log(state, args):
 def t_revoke(state, args):
     w = get_wallet(state, args["wallet_id"])
     w["frozen_global"] = True
+    reason = args.get("reason", "owner revoked agent access")
+    # Ryan F3: revoking must also cancel the wallet's pending approval
+    # queue, and log each cancellation — at v0.2.0 queued requests
+    # silently stayed "pending" forever after a revoke.
+    cancelled = []
+    for rid, req in state["pending"].items():
+        if req["wallet"] == w["id"] and req["status"] == "pending":
+            req["status"] = "cancelled"
+            req["resolved_at"] = now()
+            cancelled.append(rid)
     audit(state, w["id"], "kill_switch_engaged", w["owner_id"],
-          {"reason": args.get("reason", "owner revoked agent access")})
+          {"reason": reason, "cancelled_request_ids": cancelled})
+    for rid in cancelled:
+        audit(state, w["id"], "approval_cancelled", w["owner_id"],
+              {"request_id": rid,
+               "reason": "wallet revoked (kill switch) before resolution"})
     return {"wallet_id": w["id"], "frozen": True,
+            "cancelled_request_ids": cancelled,
             "note": "All spending stops immediately. This revocation is timestamped in the audit log — the provable 'notify' step."}
 
 
