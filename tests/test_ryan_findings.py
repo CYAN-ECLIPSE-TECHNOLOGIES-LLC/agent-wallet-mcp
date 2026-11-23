@@ -108,15 +108,17 @@ class TestF2RefusedApprovalLogging(unittest.TestCase):
     corrupts that evidence (Ryan's entry 14, post-revoke)."""
 
     def test_post_revoke_approval_is_refused_in_log(self):
+        # Ryan's exact scenario. With the F3 cure the queued request is
+        # cancelled by the revoke itself, so the later approval attempt
+        # finds nothing pending — and the log shows the cancellation,
+        # never a grant.
         st, wid = make_wallet(BASE)
         rid = queue(st, wid, "30.00")
         server.t_revoke(st, {"wallet_id": wid, "reason": "test"})
-        r = approve(st, rid)
-        self.assertEqual(r["status"], "rejected")
+        with self.assertRaises(server.ToolError):
+            approve(st, rid)
         self.assertEqual(entries_for(st, "approval_granted", rid), [])
-        refused = entries_for(st, "approval_refused", rid)
-        self.assertEqual(len(refused), 1)
-        self.assertTrue(refused[0]["detail"].get("reason"))
+        self.assertEqual(len(entries_for(st, "approval_cancelled", rid)), 1)
 
     def test_policy_refusal_at_approval_is_refused_in_log(self):
         st, wid = make_wallet(BASE)
