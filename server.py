@@ -6,8 +6,9 @@
 
 Powered by Cyan Eclipse Technologies (cetech.ai).
 
-The thesis: Wells Fargo's Section 15 (effective Nov 24, 2026) makes an agent's
-actions legally yours with NO controls attached. This server is the opposite
+The thesis: when an agent spends, the human owner carries the consequences —
+typically with no controls attached and no record separating what they
+authorized from what the agent chose. This server is the opposite
 design — an agent wallet where responsibility follows SCOPE:
 
   * The human grants a written policy: per-transaction cap, daily cap,

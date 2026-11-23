@@ -5,7 +5,7 @@ Listed on Eclipse Bazaar (eclipsebazaar.com).
 
 ## Why this exists
 
-On **November 24, 2026**, Wells Fargo's Online Access Agreement Section 15 takes effect: anything your SI agent does with your bank account is legally *you* — "at your own risk," including transactions you did not want or intend, with no controls attached and no duty on the bank to watch.
+When an SI agent spends from a person's account, the person carries the consequences — typically with no spending controls attached, and no record that separates what they authorized from what the agent chose.
 
 This MCP server is the opposite design: **an agent wallet where responsibility follows scope.**
 
